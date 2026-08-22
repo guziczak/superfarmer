@@ -326,7 +326,7 @@ var DiceScene = (function () {
     var floorMat = new CANNON.Material('floor');
     var wallMat = new CANNON.Material('wall');
     world.addContactMaterial(new CANNON.ContactMaterial(diceMat, floorMat, { friction: 0.3, restitution: 0.3 }));
-    world.addContactMaterial(new CANNON.ContactMaterial(diceMat, wallMat, { friction: 0.01, restitution: 0.3 }));
+    world.addContactMaterial(new CANNON.ContactMaterial(diceMat, wallMat, { friction: 0.06, restitution: 0.28 }));
     world.addContactMaterial(new CANNON.ContactMaterial(diceMat, diceMat, { friction: 0.22, restitution: 0.38 }));
     this._matDice = diceMat; this._matFloor = floorMat; this._matWall = wallMat;
 
@@ -420,8 +420,8 @@ var DiceScene = (function () {
       body.linearDamping = 0.09;
       body.angularDamping = 0.14;
       body.allowSleep = true;
-      body.sleepSpeedLimit = U * 0.35;
-      body.sleepTimeLimit = 0.5;
+      body.sleepSpeedLimit = U * 0.45;
+      body.sleepTimeLimit = 0.4;
       body.userData = { kind: 'die', index: d };
       world.addBody(body);
       this.dice.push({ mesh: mesh, body: body, symbols: defs[d].symbols });
@@ -541,7 +541,7 @@ var DiceScene = (function () {
       d.body.addShape(this._makeHull(ideal));
       d.body.updateMassProperties();
       d.body.updateBoundingRadius();
-      d.body.sleepSpeedLimit = ideal * 0.35;
+      d.body.sleepSpeedLimit = ideal * 0.45;
     }
     // po zmianie rozmiaru ustaw kostki na czysto (o ile nie są w locie)
     if (this.state === 'idle') this._restDice(false);
@@ -809,6 +809,17 @@ var DiceScene = (function () {
         b.force.y += (ty - b.position.y) * k * b.mass - b.velocity.y * c * b.mass;
         b.force.z += (tz - b.position.z) * k * b.mass - b.velocity.z * c * b.mass;
         b.angularVelocity.scale(0.94, b.angularVelocity);
+      }
+    }
+    // tłumik dogasania: powolne turlanie i grzechot przy ścianach ma szybko usnąć,
+    // ale żywy rzut zostaje nietknięty
+    if (this.state === 'flying') {
+      for (var di = 0; di < 2; di++) {
+        var db = this.dice[di].body;
+        if (db.sleepState !== CANNON.Body.SLEEPING && db.velocity.length() < this.U * 2.4) {
+          db.velocity.scale(0.965, db.velocity);
+          db.angularVelocity.scale(0.955, db.angularVelocity);
+        }
       }
     }
     this.world.step(step);

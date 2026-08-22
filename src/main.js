@@ -117,6 +117,7 @@
           HUD.refresh(S, { player: S.cur, anim: (function () { var m = {}; m[gt] = 1; return m; })() });
           AUDIO.coin();
           wait = 1250;
+          if (RULES.checkWin(curP().herd)) { finishGame(S.cur); return; }
         }
       }
       return sleep(wait).then(function () {
@@ -366,6 +367,7 @@
         HUD.closeSheets();
         var anim = {}; anim[getSym] = 1;
         HUD.refresh(S, { player: S.cur, anim: anim });
+        if (RULES.checkWin(curP().herd)) { finishGame(S.cur); return; }
         HUD.setDock('preroll-human', { exchangeUsed: true, hint: 'Wymiana za Tobą — teraz rzuć kośćmi!' });
         save();
       },
