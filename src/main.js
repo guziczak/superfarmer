@@ -16,6 +16,8 @@
   var GEN = 0;         // generacja — unieważnia zawieszone sekwencje po restarcie
   var dice = null;
   var atlas = null;
+  var DBG = /[?&]debug/.test(location.search);
+  function dlog() { if (DBG) console.log.apply(console, ['[SF]'].concat([].slice.call(arguments))); }
 
   function sleep(ms) {
     var g = GEN;
@@ -81,6 +83,7 @@
     var g = GEN;
     S.phase = 'preroll';
     S.exchangeUsed = false;
+    dlog('beginTurn cur=', S.cur, 'turn=', S.turnCount);
     save();
     HUD.refresh(S);
     HUD.banner(turnBannerText(), S.cur === 0 ? 'green' : 'orange');
@@ -118,6 +121,7 @@
       }
       return sleep(wait).then(function () {
         if (g !== GEN) return;
+        dlog('bot throwAuto, cur=', S.cur, 'phase=', S.phase);
         HUD.setDock('bot', { text: 'Zenek rzuca kośćmi…' });
         dice.throwAuto();
       });
@@ -128,6 +132,7 @@
   function resolveRoll(faces) {
     var g = GEN;
     var p = curP();
+    dlog('resolveRoll cur=', S.cur, 'faces=', faces.join('+'));
     S.phase = 'resolving';
     save();
     S.stats.rolls[S.cur]++;
@@ -300,6 +305,7 @@
         symbolsA: RULES.DIE_A,
         symbolsB: RULES.DIE_B,
         onSettle: function (faces) {
+          dlog('onSettle faces=', faces.join('+'), 'phase=', S && S.phase, 'cur=', S && S.cur);
           if (!S || S.phase !== 'rolling') return;
           resolveRoll(faces);
         },
@@ -308,6 +314,7 @@
           if (navigator.vibrate && strength > 0.35) { try { navigator.vibrate(strength > 0.7 ? 12 : 6); } catch (e) {} }
         },
         onThrow: function () {
+          dlog('onThrow phase=', S && S.phase, 'cur=', S && S.cur);
           if (!S || (S.phase !== 'preroll' && S.phase !== 'rolling')) return;
           S.phase = 'rolling';
           HUD.swipeHint(false);
