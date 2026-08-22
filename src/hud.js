@@ -104,8 +104,9 @@ var HUD = (function () {
       var bad = (sym === 'wolf' || sym === 'fox');
       el.innerHTML = img(sym, 22) + '<span>' + SYMBOLS.NAMES_PL[sym][0] + '</span>';
       el.className = 'dielabel' + (bad ? ' bad' : '');
-      el.style.left = pos.x + 'px';
-      el.style.top = pos.y + 'px';
+      var topbarB = $('topbar').getBoundingClientRect().bottom;
+      el.style.left = Math.min(Math.max(pos.x, 70), innerWidth - 70) + 'px';
+      el.style.top = Math.max(pos.y, topbarB + 64) + 'px';
       void el.offsetWidth;
       el.classList.add('show');
     }
@@ -395,7 +396,7 @@ var HUD = (function () {
   function measureInsets() {
     var top = $('topbar').getBoundingClientRect();
     var dock = $('dock').getBoundingClientRect();
-    return { top: Math.ceil(top.bottom), right: 0, bottom: Math.ceil(innerHeight - dock.top), left: 0 };
+    return { top: Math.ceil(top.bottom) + 26, right: 0, bottom: Math.ceil(innerHeight - dock.top) + 6, left: 0 };
   }
 
   return {

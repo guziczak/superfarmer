@@ -123,11 +123,11 @@ var DiceScene = (function () {
   function makeDieMaterial(dod, atlasTex, symbols, baseColor) {
     var mat = new THREE.MeshPhysicalMaterial({
       color: baseColor,
-      roughness: 0.34,
+      roughness: 0.38,
       metalness: 0.0,
-      clearcoat: 0.55,
-      clearcoatRoughness: 0.28,
-      envMapIntensity: 0.85
+      clearcoat: 0.32,
+      clearcoatRoughness: 0.34,
+      envMapIntensity: 0.65
     });
     var faceN = [], faceT = [], faceSym = [];
     for (var i = 0; i < 12; i++) {
@@ -167,7 +167,7 @@ var DiceScene = (function () {
           '  }',
           '}'
         ].join('\n'))
-        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, roughnessFactor * 0.7, sfA);');
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, roughnessFactor * 0.92, sfA);');
     };
     mat.customProgramCacheKey = function () { return 'sfdie' + symbols.join(''); };
     return mat;
@@ -325,9 +325,9 @@ var DiceScene = (function () {
     var diceMat = new CANNON.Material('dice');
     var floorMat = new CANNON.Material('floor');
     var wallMat = new CANNON.Material('wall');
-    world.addContactMaterial(new CANNON.ContactMaterial(diceMat, floorMat, { friction: 0.26, restitution: 0.34 }));
-    world.addContactMaterial(new CANNON.ContactMaterial(diceMat, wallMat, { friction: 0.12, restitution: 0.5 }));
-    world.addContactMaterial(new CANNON.ContactMaterial(diceMat, diceMat, { friction: 0.2, restitution: 0.45 }));
+    world.addContactMaterial(new CANNON.ContactMaterial(diceMat, floorMat, { friction: 0.3, restitution: 0.3 }));
+    world.addContactMaterial(new CANNON.ContactMaterial(diceMat, wallMat, { friction: 0.16, restitution: 0.3 }));
+    world.addContactMaterial(new CANNON.ContactMaterial(diceMat, diceMat, { friction: 0.22, restitution: 0.38 }));
     this._matDice = diceMat; this._matFloor = floorMat; this._matWall = wallMat;
 
     var floorBody = new CANNON.Body({ mass: 0, material: floorMat, shape: new CANNON.Plane() });
@@ -417,8 +417,8 @@ var DiceScene = (function () {
       mesh.receiveShadow = true;
       scene.add(mesh);
       var body = new CANNON.Body({ mass: 1.2, material: diceMat, shape: makeHull(U) });
-      body.linearDamping = 0.04;
-      body.angularDamping = 0.07;
+      body.linearDamping = 0.09;
+      body.angularDamping = 0.14;
       body.allowSleep = true;
       body.sleepSpeedLimit = U * 0.35;
       body.sleepTimeLimit = 0.5;
@@ -711,7 +711,7 @@ var DiceScene = (function () {
       var tz = r.cz + (Math.random() - 0.5) * r.h * 0.3;
       var dx = tx - b.position.x, dz = tz - b.position.z;
       var l = Math.hypot(dx, dz) || 1;
-      var sp = U * (11 + Math.random() * 6);
+      var sp = U * (9 + Math.random() * 5);
       b.velocity.set(dx / l * sp, U * (4.5 + Math.random() * 2), dz / l * sp);
       var s = 14 + Math.random() * 9;
       b.angularVelocity.set((Math.random() - 0.5) * s * 2, (Math.random() - 0.5) * s, (Math.random() - 0.5) * s * 2);
@@ -826,32 +826,32 @@ var DiceScene = (function () {
     this._settleTimer += dt;
     if (this._settleTimer < 0.4) return;
 
-    // sprawdź przekrzywienie
-    var results = [], cocked = false;
+    // sprawdź przekrzywienie: lekkie (< ~20°) dosnapuj bez podskoku,
+    // poważne (kostka oparta o coś) — podrzuć jeszcze raz
+    var results = [], leaning = false;
     for (var j = 0; j < 2; j++) {
       var r = this._faceUp(this.dice[j]);
       results.push(r);
-      if (r.dot < 0.985) cocked = true;
+      if (r.dot < 0.94) leaning = true;
     }
-    if (cocked && this._cockedTries < 4) {
+    if (leaning && this._cockedTries < 4) {
       this._cockedTries++;
       this._settleTimer = 0;
       for (var m = 0; m < 2; m++) {
         var bb = this.dice[m].body;
-        if (results[m].dot < 0.985) {
+        if (results[m].dot < 0.94) {
           bb.wakeUp();
-          bb.position.y += U * 0.55;
-          bb.position.x += (this.rect.cx - bb.position.x) * 0.34;
-          bb.position.z += (this.rect.cz - bb.position.z) * 0.34;
-          bb.velocity.set((Math.random() - 0.5) * U * 2.5, U * 2.4, (Math.random() - 0.5) * U * 2.5);
-          bb.angularVelocity.set((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 6);
+          bb.position.y += U * 0.5;
+          bb.position.x += (this.rect.cx - bb.position.x) * 0.2;
+          bb.position.z += (this.rect.cz - bb.position.z) * 0.2;
+          bb.velocity.set((Math.random() - 0.5) * U * 2, U * 2.2, (Math.random() - 0.5) * U * 2);
+          bb.angularVelocity.set((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 2.5, (Math.random() - 0.5) * 5);
         }
       }
       return;
     }
-    if (cocked) {
-      // dośnij do najbliższej płaskiej pozycji (gwarancja zakończenia)
-      for (var sIdx = 0; sIdx < 2; sIdx++) this._snapFlat(this.dice[sIdx], results[sIdx].face);
+    for (var sIdx = 0; sIdx < 2; sIdx++) {
+      if (results[sIdx].dot < 0.9995) this._snapFlat(this.dice[sIdx], results[sIdx].face);
     }
     this.state = 'idle';
     var faces = [results[0].symbol, results[1].symbol];
