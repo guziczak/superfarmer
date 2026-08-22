@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>dev: atlas</title>
+<style>
+  body { background: #2b2118; margin: 0; padding: 20px; font-family: monospace; color: #eee; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 16px; }
+  .face { width: 150px; height: 150px; background: radial-gradient(circle at 35% 30%, #faf4e4, #e8dfc6); border-radius: 26px; display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 14px rgba(0,0,0,.5); }
+  .face img { width: 112px; height: 112px; }
+  canvas { max-width: 100%; background: #444; image-rendering: auto; }
+  .lbl { text-align: center; font-size: 12px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h3>Atlas (tło szare = przezroczystość)</h3>
+<div id="atlas"></div>
+<h3>Na ściance kostki (kość słoniowa)</h3>
+<div class="row" id="faces"></div>
+<script src="../src/symbols.js"></script>
+<script>
+  var atlas = SYMBOLS.buildAtlas(2048);
+  atlas.style.width = '1024px';
+  document.getElementById('atlas').appendChild(atlas);
+  var syms = ['rabbit','sheep','pig','cow','horse','wolf','fox','smallDog','bigDog'];
+  var wrap = document.getElementById('faces');
+  syms.forEach(function (s) {
+    var d = document.createElement('div');
+    d.innerHTML = '<div class="face"><img src="' + SYMBOLS.sprite(s, 112) + '"></div><div class="lbl">' + s + '</div>';
+    wrap.appendChild(d);
+  });
+</script>
+</body>
+</html>

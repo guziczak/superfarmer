@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>dev: kostki 3D</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #221910; }
+  #cv { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #bar { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 10px; }
+  button { font: 600 15px system-ui; padding: 10px 18px; border-radius: 10px; border: 0; background: #f0a63c; color: #33261b; }
+  #out { position: fixed; top: 10px; left: 10px; color: #fff; font: 13px monospace; z-index: 5; text-shadow: 0 1px 2px #000; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="out">…</div>
+<div id="bar"><button id="auto">throwAuto</button></div>
+<script src="../vendor/three.min.js"></script>
+<script src="../vendor/cannon-es.global.js"></script>
+<script src="../src/symbols.js"></script>
+<script src="../src/rules.js"></script>
+<script src="../src/dice3d.js"></script>
+<script>
+  var out = document.getElementById('out');
+  try {
+    var scene = new DiceScene({
+      canvas: document.getElementById('cv'),
+      atlasCanvas: SYMBOLS.buildAtlas(2048),
+      symbolsA: RULES.DIE_A,
+      symbolsB: RULES.DIE_B,
+      onSettle: function (faces) { out.textContent = 'WYNIK: ' + faces.join(' + '); console.log('[SETTLE]', faces.join('+')); },
+      onImpact: function (kind, s) { console.log('[IMPACT]', kind, s.toFixed(2)); },
+      onThrow: function () { out.textContent = 'w locie…'; console.log('[THROW]'); }
+    });
+    scene.setInteractive(true);
+    scene.setInsets({ top: 60, right: 0, bottom: 70, left: 0 });
+    window.SCENE = scene;
+    out.textContent = 'gotowe — przeciągnij lub throwAuto';
+    console.log('[DEV] scene ready');
+  } catch (err) {
+    out.textContent = 'BŁĄD: ' + err.message;
+    console.error('[DEV-ERR]', err);
+  }
+  document.getElementById('auto').onclick = function () { SCENE.throwAuto(); };
+  window.addEventListener('resize', function () { SCENE && SCENE.resize(); });
+</script>
+</body>
+</html>

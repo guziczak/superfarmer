@@ -1,0 +1,84 @@
+<canvas id="scene3d"></canvas>
+<div id="vignette"></div>
+
+<div id="hud">
+  <header id="topbar"></header>
+  <div id="banner" class="display"></div>
+  <div id="dl0" class="dielabel"></div>
+  <div id="dl1" class="dielabel"></div>
+  <div id="swipehint"><div class="dot"></div></div>
+  <footer id="dock">
+    <div id="feedwrap">
+      <button id="feed" aria-label="Historia zdarzeń"></button>
+      <div id="hintline"></div>
+    </div>
+    <div id="actions">
+      <button id="btnMenu" aria-label="Menu">☰</button>
+      <button id="btnExchange" class="btn sec">Wymiana</button>
+      <button id="btnRoll" class="btn pri">Rzuć</button>
+    </div>
+  </footer>
+</div>
+
+<div id="flash"></div>
+<div id="eventbig"></div>
+<div id="gains"></div>
+
+<div id="backdrop" class="backdrop"></div>
+
+<div id="sheetEx" class="sheet" role="dialog" aria-label="Wymiana">
+  <div class="grip"></div>
+  <h2 class="display">Wymiana ze Stadem Głównym</h2>
+  <div class="sub">Jedna wymiana na turę, zawsze przed rzutem. Można wymieniać w obie strony.</div>
+  <div class="scroll" id="exlist"></div>
+</div>
+
+<div id="sheetRules" class="sheet" role="dialog" aria-label="Zasady">
+  <div class="grip"></div>
+  <h2 class="display">Zasady</h2>
+  <div class="sub">Superfarmer, zasady wydania klasycznego (Granna)</div>
+  <div class="scroll rules" id="rulesContent"></div>
+</div>
+
+<div id="sheetMenu" class="sheet" role="dialog" aria-label="Menu">
+  <div class="grip"></div>
+  <h2 class="display">Menu</h2>
+  <div class="sub"></div>
+  <div class="scroll" id="menuContent"></div>
+</div>
+
+<div id="sheetLog" class="sheet" role="dialog" aria-label="Historia">
+  <div class="grip"></div>
+  <h2 class="display">Historia gry</h2>
+  <div class="sub"></div>
+  <div class="scroll" id="logContent"></div>
+</div>
+
+<canvas id="confetti"></canvas>
+
+<div id="startov" class="overlay">
+  <div class="eyebrow">Hodowla zwierzątek · 1943</div>
+  <h1 class="display">SUPER&shy;FARMER</h1>
+  <p class="tag">Rzucaj kośćmi przeciągnięciem palca, rozmnażaj stado i jako pierwszy zbierz konia, krowę, świnię, owcę i królika.</p>
+  <div class="modes">
+    <button id="btnResume" class="btn pri" hidden>Wznów grę</button>
+    <button id="btnSolo" class="btn pri">Graj z Zenkiem 🤖</button>
+    <button id="btnDuo" class="btn sec">2 graczy — jeden telefon</button>
+  </div>
+  <div class="linkrow">
+    <button class="link" id="btnRules0">Zasady</button>
+    <button class="link" id="btnSound0"></button>
+  </div>
+  <div class="credits">Gra Karola Borsuka · realizacja 3D — kostki k12 z prawdziwą fizyką</div>
+</div>
+
+<div id="winov" class="overlay">
+  <div class="eyebrow" id="winEyebrow"></div>
+  <h1 class="display" id="winTitle"></h1>
+  <p class="tag" id="winSub"></p>
+  <div class="statgrid" id="winStats"></div>
+  <div class="modes">
+    <button id="btnAgain" class="btn pri">Jeszcze raz</button>
+    <button id="btnMenuBack" class="btn sec">Menu główne</button>
+  </div>
+</div>
