@@ -12,7 +12,7 @@ const read = (p) => readFileSync(join(root, p), 'utf8');
 /* ---------- vendor ---------- */
 let three = read('vendor/three.min.js');
 // zdejmij ostrzeżenie o deprecjacji buildu UMD (świadomie go używamy)
-three = three.replace(/console\.warn\(\s*["']Scripts? ["“][^)]*deprecated[^)]*\)\s*;?/i, ';');
+three = three.replace(/console\.warn\(\s*["']Scripts? ["“][^)]*deprecated[^)]*\)/i, 'void 0');
 
 let cannon = read('vendor/cannon-es.cjs.js');
 cannon = cannon.replace(
