@@ -123,11 +123,11 @@ var DiceScene = (function () {
   function makeDieMaterial(dod, atlasTex, symbols, baseColor) {
     var mat = new THREE.MeshPhysicalMaterial({
       color: baseColor,
-      roughness: 0.38,
+      roughness: 0.42,
       metalness: 0.0,
-      clearcoat: 0.32,
-      clearcoatRoughness: 0.34,
-      envMapIntensity: 0.65
+      clearcoat: 0.2,
+      clearcoatRoughness: 0.42,
+      envMapIntensity: 0.5
     });
     var faceN = [], faceT = [], faceSym = [];
     for (var i = 0; i < 12; i++) {
@@ -789,7 +789,8 @@ var DiceScene = (function () {
       this.camera.position.copy(this._camBase);
     }
 
-    this._checkSettle(dt);
+    if (this.state === 'snapping') this._stepSnap(dt);
+    else this._checkSettle(dt);
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -850,27 +851,42 @@ var DiceScene = (function () {
       }
       return;
     }
-    for (var sIdx = 0; sIdx < 2; sIdx++) {
-      if (results[sIdx].dot < 0.9995) this._snapFlat(this.dice[sIdx], results[sIdx].face);
-    }
-    this.state = 'idle';
     var faces = [results[0].symbol, results[1].symbol];
-    this.onSettle(faces);
+    var items = [];
+    for (var sIdx = 0; sIdx < 2; sIdx++) {
+      var die = this.dice[sIdx], res = results[sIdx];
+      var cur = die.body.quaternion;
+      var cq = new THREE.Quaternion(cur.x, cur.y, cur.z, cur.w);
+      var n = this.dod.normals[res.face];
+      var wn = new THREE.Vector3(n[0], n[1], n[2]).applyQuaternion(cq).normalize();
+      var fix = new THREE.Quaternion().setFromUnitVectors(wn, new THREE.Vector3(0, 1, 0));
+      var q1 = fix.multiply(cq).normalize();
+      die.body.velocity.setZero();
+      die.body.angularVelocity.setZero();
+      die.body.sleep();
+      items.push({ die: die, q0: cq.clone(), q1: q1, y0: die.body.position.y, y1: this.U });
+    }
+    this._snapAnim = { t: 0, faces: faces, items: items };
+    this.state = 'snapping';
   };
 
-  P._snapFlat = function (die, face) {
-    var n = this.dod.normals[face];
-    var cur = die.body.quaternion;
-    var wn = cur.vmult(new CANNON.Vec3(n[0], n[1], n[2]));
-    var fix = new THREE.Quaternion().setFromUnitVectors(
-      new THREE.Vector3(wn.x, wn.y, wn.z).normalize(), new THREE.Vector3(0, 1, 0));
-    var cq = new THREE.Quaternion(cur.x, cur.y, cur.z, cur.w);
-    fix.multiply(cq);
-    die.body.quaternion.set(fix.x, fix.y, fix.z, fix.w);
-    die.body.position.y = this.U;
-    die.body.velocity.setZero();
-    die.body.angularVelocity.setZero();
-    die.body.sleep();
+  P._stepSnap = function (dt) {
+    var A = this._snapAnim;
+    if (!A) { this.state = 'idle'; return; }
+    A.t += dt / 0.16;
+    var k = Math.min(1, A.t);
+    k = k * k * (3 - 2 * k);
+    for (var i = 0; i < A.items.length; i++) {
+      var it = A.items[i];
+      var q = it.q0.clone().slerp(it.q1, k);
+      it.die.body.quaternion.set(q.x, q.y, q.z, q.w);
+      it.die.body.position.y = it.y0 + (it.y1 - it.y0) * k;
+    }
+    if (A.t >= 1) {
+      this._snapAnim = null;
+      this.state = 'idle';
+      this.onSettle(A.faces);
+    }
   };
 
   /* ---------- API ---------- */
@@ -882,7 +898,7 @@ var DiceScene = (function () {
     }
   };
 
-  P.isBusy = function () { return this.state === 'flying' || this.state === 'held'; };
+  P.isBusy = function () { return this.state === 'flying' || this.state === 'held' || this.state === 'snapping'; };
 
   P.shake = function (power) {
     var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
