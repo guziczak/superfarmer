@@ -305,6 +305,12 @@ var HUD = (function () {
   function showStart(o) {
     $('btnResume').hidden = !o.canResume;
     $('btnSound0').textContent = AUDIO.isEnabled() ? 'Dźwięk: wł.' : 'Dźwięk: wył.';
+    $('modeButtons').hidden = false;
+    $('nameform').hidden = true;
+    if (o.names) {
+      $('inpName1').value = o.names[0] || '';
+      $('inpName2').value = o.names[1] || '';
+    }
     $('startov').classList.add('show');
   }
   function hideStart() { $('startov').classList.remove('show'); }
@@ -378,7 +384,22 @@ var HUD = (function () {
     $('feed').addEventListener('click', function () { renderLog(); openSheet('sheetLog'); AUDIO.ui(); });
     $('backdrop').addEventListener('click', function () { closeSheets(); });
     $('btnSolo').addEventListener('click', function () { cb.onModeStart('solo'); });
-    $('btnDuo').addEventListener('click', function () { cb.onModeStart('duo'); });
+    $('btnDuo').addEventListener('click', function () {
+      AUDIO.ui();
+      $('modeButtons').hidden = true;
+      $('nameform').hidden = false;
+      $('inpName1').focus();
+    });
+    $('btnDuoBack').addEventListener('click', function () {
+      $('nameform').hidden = true;
+      $('modeButtons').hidden = false;
+    });
+    var duoGo = function () {
+      cb.onModeStart('duo', [$('inpName1').value.trim(), $('inpName2').value.trim()]);
+    };
+    $('btnDuoGo').addEventListener('click', duoGo);
+    $('inpName1').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('inpName2').focus(); });
+    $('inpName2').addEventListener('keydown', function (e) { if (e.key === 'Enter') duoGo(); });
     $('btnResume').addEventListener('click', function () { cb.onResume(); });
     $('btnRules0').addEventListener('click', function () { openSheet('sheetRules'); AUDIO.ui(); });
     $('btnSound0').addEventListener('click', function () {

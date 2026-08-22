@@ -7,6 +7,7 @@
   var LS_SAVE = 'sf3d.save.v1';
   var LS_SOUND = 'sf3d.sound';
   var LS_TUT = 'sf3d.tutorial';
+  var LS_NAMES = 'sf3d.names';
 
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -35,10 +36,11 @@
   }
 
   /* ---------- stan ---------- */
-  function newState(mode) {
+  function newState(mode, names) {
+    names = names || [];
     var players = mode === 'solo'
       ? [{ name: 'Ty', isBot: false }, { name: 'Zenek 🤖', isBot: true }]
-      : [{ name: 'Gracz 1', isBot: false }, { name: 'Gracz 2', isBot: false }];
+      : [{ name: names[0] || 'Gracz 1', isBot: false }, { name: names[1] || 'Gracz 2', isBot: false }];
     players.forEach(function (p) { p.herd = RULES.emptyHerd(); });
     return {
       mode: mode,
@@ -74,8 +76,8 @@
   function whoName() { return curP().name; }
   function isBotTurn() { return curP().isBot; }
   function turnBannerText() {
-    if (S.mode === 'solo') return S.cur === 0 ? 'Twoja tura' : 'Tura Zenka';
-    return 'Tura: ' + curP().name;
+    if (S.mode === 'solo') return S.cur === 0 ? 'Twoja tura' : 'Teraz Zenek';
+    return 'Teraz: ' + curP().name;
   }
 
   /* ---------- pętla tury ---------- */
@@ -247,15 +249,15 @@
     HUD.showWin({
       eyebrow: 'Pełna zagroda!',
       title: S.mode === 'solo' ? (humanWon ? 'WYGRYWASZ!' : 'ZENEK WYGRAŁ') : (p.name.toUpperCase() + ' WYGRYWA!'),
-      sub: p.name + ' pierwszy zebrał konia, krowę, świnię, owcę i królika.',
+      sub: p.name + ' ma komplet: koń, krowa, świnia, owca i królik!',
       stats: attacks
     });
   }
 
   /* ---------- akcje HUD ---------- */
-  function startGame(mode) {
+  function startGame(mode, names) {
     GEN++;
-    S = newState(mode);
+    S = newState(mode, names);
     HUD.hideStart();
     HUD.hideWin();
     HUD.closeSheets();
@@ -284,7 +286,11 @@
     HUD.hideWin();
     HUD.closeSheets();
     dice.setInteractive(false);
-    HUD.showStart({ canResume: !!loadSave() });
+    HUD.showStart({ canResume: !!loadSave(), names: storedNames() });
+  }
+
+  function storedNames() {
+    try { return JSON.parse(lsGet(LS_NAMES) || 'null'); } catch (e) { return null; }
   }
 
   /* ---------- insets / resize ---------- */
@@ -381,16 +387,20 @@
         lsSet(LS_SOUND, AUDIO.isEnabled() ? '1' : '0');
         if (AUDIO.isEnabled()) AUDIO.ui();
       },
-      onModeStart: function (mode) { AUDIO.unlock(); AUDIO.ui(); startGame(mode); },
+      onModeStart: function (mode, names) {
+        AUDIO.unlock(); AUDIO.ui();
+        if (mode === 'duo' && names) lsSet(LS_NAMES, JSON.stringify(names));
+        startGame(mode, names);
+      },
       onResume: function () {
         AUDIO.unlock(); AUDIO.ui();
         var s = loadSave();
         if (s) resumeGame(s); else startGame('solo');
       },
       onRestart: function () {
-        if (S && S.mode) startGame(S.mode); else backToMenu();
+        if (S && S.mode) startGame(S.mode, S.players.map(function (p) { return p.name; })); else backToMenu();
       },
-      onAgain: function () { AUDIO.ui(); startGame(S ? S.mode : 'solo'); },
+      onAgain: function () { AUDIO.ui(); startGame(S ? S.mode : 'solo', S ? S.players.map(function (p) { return p.name; }) : null); },
       onBackToMenu: function () { AUDIO.ui(); backToMenu(); }
     });
 
@@ -407,7 +417,7 @@
     }, { passive: false });
 
     syncInsets();
-    HUD.showStart({ canResume: !!loadSave() });
+    HUD.showStart({ canResume: !!loadSave(), names: storedNames() });
     // uchwyt diagnostyczny (devtools)
     window.__SF = { dice: dice, get state() { return S; } };
   }

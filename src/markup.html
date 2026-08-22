@@ -60,10 +60,16 @@
   <div class="eyebrow">Hodowla zwierzątek · 1943</div>
   <h1 class="display">SUPER&shy;FARMER</h1>
   <p class="tag">Rzucaj kośćmi przeciągnięciem palca, rozmnażaj stado i jako pierwszy zbierz konia, krowę, świnię, owcę i królika.</p>
-  <div class="modes">
+  <div class="modes" id="modeButtons">
     <button id="btnResume" class="btn pri" hidden>Wznów grę</button>
     <button id="btnSolo" class="btn pri">Graj z Zenkiem 🤖</button>
     <button id="btnDuo" class="btn sec">2 graczy — jeden telefon</button>
+  </div>
+  <div class="modes" id="nameform" hidden>
+    <input class="nameinput" id="inpName1" maxlength="14" placeholder="Gracz 1" autocomplete="off" enterkeyhint="next">
+    <input class="nameinput" id="inpName2" maxlength="14" placeholder="Gracz 2" autocomplete="off" enterkeyhint="go">
+    <button id="btnDuoGo" class="btn pri">Zaczynamy!</button>
+    <button id="btnDuoBack" class="link">← wróć</button>
   </div>
   <div class="linkrow">
     <button class="link" id="btnRules0">Zasady</button>

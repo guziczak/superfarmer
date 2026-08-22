@@ -2,7 +2,7 @@
 // warianty: full | nociel | nowalls | onedie | nofloorfriction
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const CANNON = require('../scratch-cannon.cjs');
+const CANNON = require('../vendor/cannon-es.cjs.js');
 
 const PHI = (1 + Math.sqrt(5)) / 2;
 function buildDodeca() {

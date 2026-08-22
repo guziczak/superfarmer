@@ -420,7 +420,7 @@ var DiceScene = (function () {
       body.linearDamping = 0.09;
       body.angularDamping = 0.14;
       body.allowSleep = true;
-      body.sleepSpeedLimit = U * 0.45;
+      body.sleepSpeedLimit = U * 0.28;
       body.sleepTimeLimit = 0.4;
       body.userData = { kind: 'die', index: d };
       world.addBody(body);
@@ -431,8 +431,6 @@ var DiceScene = (function () {
     this._restDice(true);
 
     // wejście
-    this._pointer = null;
-    this._history = [];
     this._bindInput();
 
     // pętla
@@ -541,7 +539,7 @@ var DiceScene = (function () {
       d.body.addShape(this._makeHull(ideal));
       d.body.updateMassProperties();
       d.body.updateBoundingRadius();
-      d.body.sleepSpeedLimit = ideal * 0.45;
+      d.body.sleepSpeedLimit = ideal * 0.28;
     }
     // po zmianie rozmiaru ustaw kostki na czysto (o ile nie są w locie)
     if (this.state === 'idle') this._restDice(false);
@@ -607,11 +605,12 @@ var DiceScene = (function () {
     });
   };
 
-  /* ---------- wejście: przeciągnij i rzuć ---------- */
+  /* ---------- wejście: przeciągnij i rzuć (multi-touch: palec per kostka) ---------- */
   P._bindInput = function () {
     var self = this;
     var cv = this.canvas;
     cv.style.touchAction = 'none';
+    this._holds = {}; // pointerId -> { dice:[idx..], target, history:[] }
 
     var toWorld = function (px, py, planeY) {
       var W = cv.clientWidth, H = cv.clientHeight;
@@ -623,70 +622,102 @@ var DiceScene = (function () {
       return ray.ray.origin.clone().addScaledVector(ray.ray.direction, t);
     };
 
+    var heldDice = function () {
+      var s = {};
+      for (var id in self._holds) self._holds[id].dice.forEach(function (i) { s[i] = id; });
+      return s;
+    };
+    var nearestDie = function (w, cand) {
+      var best = cand[0], bd = 1e9;
+      for (var i = 0; i < cand.length; i++) {
+        var p = self.dice[cand[i]].body.position;
+        var d = (p.x - w.x) * (p.x - w.x) + (p.z - w.z) * (p.z - w.z);
+        if (d < bd) { bd = d; best = cand[i]; }
+      }
+      return best;
+    };
+
     cv.addEventListener('pointerdown', function (e) {
       if (!self.interactive || (self.state !== 'idle' && self.state !== 'held')) return;
-      if (self._pointer !== null) return;
-      self._pointer = e.pointerId;
-      cv.setPointerCapture(e.pointerId);
-      self.state = 'held';
-      self._history = [];
       var w = toWorld(e.clientX, e.clientY, self.U * 2.1);
-      self._target = w;
-      self._pushHistory(w);
-      for (var i = 0; i < 2; i++) self.dice[i].body.wakeUp();
-      self.onHold(true);
+      var held = heldDice();
+      var assign = [];
+      if (Object.keys(self._holds).length === 0) {
+        assign = [0, 1]; // pierwszy palec bierze obie
+      } else {
+        var free = [0, 1].filter(function (i) { return !(i in held); });
+        if (free.length > 0) {
+          assign = [nearestDie(w, free)];
+        } else {
+          // drugi palec przejmuje bliższą kostkę od palca trzymającego dwie
+          var two = null;
+          for (var id in self._holds) if (self._holds[id].dice.length === 2) two = id;
+          if (two === null) return;
+          var steal = nearestDie(w, self._holds[two].dice);
+          self._holds[two].dice = self._holds[two].dice.filter(function (i) { return i !== steal; });
+          assign = [steal];
+        }
+      }
+      var wasEmpty = Object.keys(self._holds).length === 0;
+      self._holds[e.pointerId] = { dice: assign, target: w.clone(), history: [{ x: w.x, z: w.z, t: performance.now() }] };
+      assign.forEach(function (i) { self.dice[i].body.wakeUp(); });
+      self.state = 'held';
+      try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+      if (wasEmpty) self.onHold(true);
       e.preventDefault();
     });
 
     cv.addEventListener('pointermove', function (e) {
-      if (self._pointer !== e.pointerId || self.state !== 'held') return;
+      var hold = self._holds[e.pointerId];
+      if (!hold || self.state !== 'held') return;
       var w = toWorld(e.clientX, e.clientY, self.U * 2.1);
-      self._pushHistory(w);
+      var t = performance.now();
+      hold.history.push({ x: w.x, z: w.z, t: t });
+      while (hold.history.length > 2 && t - hold.history[0].t > 130) hold.history.shift();
       var r = self.rect, m = self.U * 1.5;
       w.x = Math.min(Math.max(w.x, r.x0 + m), r.x1 - m);
       w.z = Math.min(Math.max(w.z, r.z0 + m), r.z1 - m);
-      self._target = w;
+      hold.target = w;
       e.preventDefault();
     });
 
     var finish = function (e) {
-      if (self._pointer !== e.pointerId) return;
-      self._pointer = null;
-      if (self.state !== 'held') return;
-      self._releaseThrow();
+      var hold = self._holds[e.pointerId];
+      if (!hold) return;
+      delete self._holds[e.pointerId];
+      if (self.state === 'held') self._flingDice(hold);
+      if (Object.keys(self._holds).length === 0 && self.state === 'held') {
+        self._startFlight();
+        self.onHold(false);
+      }
     };
     cv.addEventListener('pointerup', finish);
     cv.addEventListener('pointercancel', finish);
     cv.addEventListener('contextmenu', function (e) { e.preventDefault(); });
   };
 
-  P._pushHistory = function (w) {
-    var t = performance.now();
-    this._history.push({ x: w.x, z: w.z, t: t });
-    while (this._history.length > 2 && t - this._history[0].t > 130) this._history.shift();
-  };
-
-  P._releaseVelocity = function () {
-    var h = this._history;
-    if (h.length < 2) return new THREE.Vector3();
+  P._holdVelocity = function (hold) {
+    var h = hold.history;
+    if (!h || h.length < 2) return new THREE.Vector3();
     var a = h[0], b = h[h.length - 1];
     var dt = Math.max(0.016, (b.t - a.t) / 1000);
     return new THREE.Vector3((b.x - a.x) / dt, 0, (b.z - a.z) / dt);
   };
 
-  P._releaseThrow = function () {
+  /** Wyrzuca kostki trzymane przez dany chwyt z prędkością gestu. */
+  P._flingDice = function (hold) {
     var U = this.U;
-    var v = this._releaseVelocity();
+    var v = this._holdVelocity(hold);
     var speed = v.length();
     var maxS = U * 34;
-    if (speed > maxS) v.multiplyScalar(maxS / speed);
+    if (speed > maxS) { v.multiplyScalar(maxS / speed); speed = maxS; }
     if (speed < U * 5) {
-      // zbyt delikatnie — dorzuć losowy wyrzut, żeby rzut zawsze był uczciwy
+      // zbyt delikatnie — dorzuć wyrzut, żeby rzut zawsze był uczciwy
       var a = Math.random() * Math.PI * 2;
       v.add(new THREE.Vector3(Math.cos(a) * U * 7, 0, Math.sin(a) * U * 7));
     }
-    for (var i = 0; i < 2; i++) {
-      var b = this.dice[i].body;
+    for (var k = 0; k < hold.dice.length; k++) {
+      var b = this.dice[hold.dice[k]].body;
       b.wakeUp();
       b.velocity.set(v.x * 1.05, U * (4.5 + Math.random() * 2.5) + speed * 0.10, v.z * 1.05);
       var s = 6 + Math.min(20, speed / U * 0.7);
@@ -696,8 +727,6 @@ var DiceScene = (function () {
         (Math.random() - 0.5) * s * 2
       );
     }
-    this._startFlight();
-    this.onHold(false);
   };
 
   P.throwAuto = function () {
@@ -790,25 +819,28 @@ var DiceScene = (function () {
       this.camera.position.copy(this._camBase);
     }
 
-    if (this.state === 'snapping') this._stepSnap(dt);
-    else this._checkSettle(dt);
+    this._checkSettle(dt);
     this.renderer.render(this.scene, this.camera);
   };
 
   P._physStep = function (step) {
-    if (this.state === 'held' && this._target) {
+    if (this.state === 'held') {
       var U = this.U;
-      for (var i = 0; i < 2; i++) {
-        var b = this.dice[i].body;
-        b.wakeUp();
-        var off = (i === 0 ? -1.6 : 1.6) * U;
-        var tx = this._target.x + off, tz = this._target.z;
-        var ty = U * 2.1;
-        var k = 130, c = 11;
-        b.force.x += (tx - b.position.x) * k * b.mass - b.velocity.x * c * b.mass;
-        b.force.y += (ty - b.position.y) * k * b.mass - b.velocity.y * c * b.mass;
-        b.force.z += (tz - b.position.z) * k * b.mass - b.velocity.z * c * b.mass;
-        b.angularVelocity.scale(0.94, b.angularVelocity);
+      for (var pid in this._holds) {
+        var hold = this._holds[pid];
+        for (var hi = 0; hi < hold.dice.length; hi++) {
+          var b = this.dice[hold.dice[hi]].body;
+          b.wakeUp();
+          // dwie kostki na jednym palcu — rozsunięte, jedna — pod palcem
+          var off = hold.dice.length === 2 ? (hi === 0 ? -1.6 : 1.6) * U : 0;
+          var tx = hold.target.x + off, tz = hold.target.z;
+          var ty = U * 2.1;
+          var k = 130, c = 11;
+          b.force.x += (tx - b.position.x) * k * b.mass - b.velocity.x * c * b.mass;
+          b.force.y += (ty - b.position.y) * k * b.mass - b.velocity.y * c * b.mass;
+          b.force.z += (tz - b.position.z) * k * b.mass - b.velocity.z * c * b.mass;
+          b.angularVelocity.scale(0.94, b.angularVelocity);
+        }
       }
     }
     // tłumik dogasania: powolne turlanie i grzechot przy ścianach ma szybko usnąć,
@@ -867,54 +899,25 @@ var DiceScene = (function () {
       }
       return;
     }
-    var faces = [results[0].symbol, results[1].symbol];
-    var items = [];
-    for (var sIdx = 0; sIdx < 2; sIdx++) {
-      var die = this.dice[sIdx], res = results[sIdx];
-      var cur = die.body.quaternion;
-      var cq = new THREE.Quaternion(cur.x, cur.y, cur.z, cur.w);
-      var n = this.dod.normals[res.face];
-      var wn = new THREE.Vector3(n[0], n[1], n[2]).applyQuaternion(cq).normalize();
-      var fix = new THREE.Quaternion().setFromUnitVectors(wn, new THREE.Vector3(0, 1, 0));
-      var q1 = fix.multiply(cq).normalize();
-      die.body.velocity.setZero();
-      die.body.angularVelocity.setZero();
-      die.body.sleep();
-      items.push({ die: die, q0: cq.clone(), q1: q1, y0: die.body.position.y, y1: this.U });
-    }
-    this._snapAnim = { t: 0, faces: faces, items: items };
-    this.state = 'snapping';
-  };
-
-  P._stepSnap = function (dt) {
-    var A = this._snapAnim;
-    if (!A) { this.state = 'idle'; return; }
-    A.t += dt / 0.16;
-    var k = Math.min(1, A.t);
-    k = k * k * (3 - 2 * k);
-    for (var i = 0; i < A.items.length; i++) {
-      var it = A.items[i];
-      var q = it.q0.clone().slerp(it.q1, k);
-      it.die.body.quaternion.set(q.x, q.y, q.z, q.w);
-      it.die.body.position.y = it.y0 + (it.y1 - it.y0) * k;
-    }
-    if (A.t >= 1) {
-      this._snapAnim = null;
-      this.state = 'idle';
-      this.onSettle(A.faces);
-    }
+    // ŻADNEGO obracania kostek po rzucie — leżą tak, jak upadły.
+    // Bryła jest poprawnym dwunastościanem foremnym (każda para ścianek
+    // równoległa), więc spoczynek na płask daje górną ściankę poziomą sam z siebie.
+    this.state = 'idle';
+    this.onSettle([results[0].symbol, results[1].symbol]);
   };
 
   /* ---------- API ---------- */
   P.setInteractive = function (on) {
     this.interactive = !!on;
     if (!on && this.state === 'held') {
-      this._pointer = null;
-      this._releaseThrow();
+      for (var pid in this._holds) this._flingDice(this._holds[pid]);
+      this._holds = {};
+      this._startFlight();
+      this.onHold(false);
     }
   };
 
-  P.isBusy = function () { return this.state === 'flying' || this.state === 'held' || this.state === 'snapping'; };
+  P.isBusy = function () { return this.state === 'flying' || this.state === 'held'; };
 
   P.shake = function (power) {
     var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;

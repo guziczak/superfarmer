@@ -27,6 +27,7 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
@@ -202,31 +203,34 @@ button {
   100% { transform: scale(1); }
 }
 
-/* ---------- baner tury / dramatu ---------- */
+/* ---------- baner tury / dramatu (duży, wycentrowany) ---------- */
 #banner {
   position: absolute;
-  top: calc(var(--sat) + 118px);
+  top: 34%;
   left: 50%;
-  transform: translateX(-50%) translateY(-12px);
-  font-size: 22px;
-  letter-spacing: 0.06em;
+  transform: translate(-50%, -50%) scale(0.82);
+  font-size: clamp(28px, 7vw, 46px);
+  letter-spacing: 0.04em;
+  text-align: center;
   color: var(--cream);
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+  text-shadow: 0 3px 16px rgba(0, 0, 0, 0.8);
   background: var(--panel);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--line);
-  padding: 10px 22px;
-  border-radius: 999px;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line-strong);
+  padding: 16px 36px;
+  border-radius: 24px;
+  box-shadow: var(--shadow);
   opacity: 0;
-  transition: opacity 0.3s, transform 0.3s;
+  transition: opacity 0.28s, transform 0.32s cubic-bezier(0.2, 1.4, 0.4, 1);
   pointer-events: none;
   white-space: nowrap;
-  max-width: 92vw;
+  max-width: 94vw;
   overflow: hidden;
   text-overflow: ellipsis;
+  z-index: 4;
 }
-#banner.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 #banner.green { color: var(--green); }
 #banner.orange { color: var(--orange); }
 
@@ -515,6 +519,20 @@ button {
 }
 .overlay .modes { display: flex; flex-direction: column; gap: 12px; width: min(320px, 86vw); margin-bottom: 20px; }
 .overlay .modes .btn { font-size: 17px; padding: 15px 20px; }
+.nameinput {
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  text-align: center;
+  background: rgba(255, 236, 200, 0.07);
+  border: 1px solid var(--line-strong);
+  border-radius: 13px;
+  padding: 14px 16px;
+  color: var(--cream);
+  width: 100%;
+}
+.nameinput::placeholder { color: var(--cream-faint); font-weight: 400; }
+.nameinput:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
 .overlay .linkrow { display: flex; gap: 20px; justify-content: center; }
 .overlay .link {
   font-size: 14px;
