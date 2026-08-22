@@ -14931,7 +14931,7 @@ var DiceScene = (function () {
     var floorMat = new CANNON.Material('floor');
     var wallMat = new CANNON.Material('wall');
     world.addContactMaterial(new CANNON.ContactMaterial(diceMat, floorMat, { friction: 0.3, restitution: 0.3 }));
-    world.addContactMaterial(new CANNON.ContactMaterial(diceMat, wallMat, { friction: 0.16, restitution: 0.3 }));
+    world.addContactMaterial(new CANNON.ContactMaterial(diceMat, wallMat, { friction: 0.01, restitution: 0.3 }));
     world.addContactMaterial(new CANNON.ContactMaterial(diceMat, diceMat, { friction: 0.22, restitution: 0.38 }));
     this._matDice = diceMat; this._matFloor = floorMat; this._matWall = wallMat;
 
@@ -15327,6 +15327,7 @@ var DiceScene = (function () {
   P._startFlight = function () {
     this.state = 'flying';
     this._settleTimer = 0;
+    this._flightTime = 0;
     this._cockedTries = 0;
     this.onThrow();
   };
@@ -15422,15 +15423,17 @@ var DiceScene = (function () {
     if (this.state !== 'flying') return;
     var calm = true;
     var U = this.U;
+    this._flightTime += dt;
+    var overtime = this._flightTime > 6.5; // bezpiecznik: nigdy nie wisimy w nieskończoność
     for (var i = 0; i < 2; i++) {
       var b = this.dice[i].body;
       if (b.sleepState !== CANNON.Body.SLEEPING) {
         if (b.velocity.length() > U * 0.55 || b.angularVelocity.length() > 0.6) { calm = false; break; }
       }
     }
-    if (!calm) { this._settleTimer = 0; return; }
+    if (!calm && !overtime) { this._settleTimer = 0; return; }
     this._settleTimer += dt;
-    if (this._settleTimer < 0.4) return;
+    if (this._settleTimer < 0.4 && !overtime) return;
 
     // sprawdź przekrzywienie: lekkie (< ~20°) dosnapuj bez podskoku,
     // poważne (kostka oparta o coś) — podrzuć jeszcze raz
@@ -15440,17 +15443,19 @@ var DiceScene = (function () {
       results.push(r);
       if (r.dot < 0.94) leaning = true;
     }
-    if (leaning && this._cockedTries < 4) {
+    if (leaning && this._cockedTries < 4 && !overtime) {
       this._cockedTries++;
       this._settleTimer = 0;
       for (var m = 0; m < 2; m++) {
         var bb = this.dice[m].body;
         if (results[m].dot < 0.94) {
           bb.wakeUp();
+          var cdx = this.rect.cx - bb.position.x, cdz = this.rect.cz - bb.position.z;
+          var cl = Math.hypot(cdx, cdz) || 1;
           bb.position.y += U * 0.5;
-          bb.position.x += (this.rect.cx - bb.position.x) * 0.2;
-          bb.position.z += (this.rect.cz - bb.position.z) * 0.2;
-          bb.velocity.set((Math.random() - 0.5) * U * 2, U * 2.2, (Math.random() - 0.5) * U * 2);
+          bb.position.x += cdx * 0.18;
+          bb.position.z += cdz * 0.18;
+          bb.velocity.set(cdx / cl * U * 2.4, U * 2.2, cdz / cl * U * 2.4);
           bb.angularVelocity.set((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 2.5, (Math.random() - 0.5) * 5);
         }
       }
