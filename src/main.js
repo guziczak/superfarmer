@@ -399,6 +399,8 @@
 
     syncInsets();
     HUD.showStart({ canResume: !!loadSave() });
+    // uchwyt diagnostyczny (devtools)
+    window.__SF = { dice: dice, get state() { return S; } };
   }
 
   if (document.readyState === 'loading') {
