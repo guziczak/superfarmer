@@ -340,7 +340,7 @@ var DiceScene = (function () {
     this.dod = dod;
 
     this._computeRect();
-    var U = this.U = Math.max(0.5, Math.min(this.rect.w, this.rect.h) / 8.6);
+    var U = this.U = this._idealU();
 
     // stół: blat + filc + ramka
     var tableTex = makeWoodTexture();
@@ -365,8 +365,8 @@ var DiceScene = (function () {
 
     var woodTex = makeWoodTexture();
     woodTex.repeat.set(2.2, 0.35);
-    this._rimMat = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.5, metalness: 0, envMapIntensity: 0.85, color: '#c99a62' });
-    this._lipMat = new THREE.MeshStandardMaterial({ roughness: 0.4, metalness: 0, envMapIntensity: 1.0, color: '#e0b57e' });
+    this._rimMat = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.55, metalness: 0, envMapIntensity: 0.55, color: '#a87c4e' });
+    this._lipMat = new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0, envMapIntensity: 0.7, color: '#c39a66' });
     this.rims = [];
     this.lips = [];
     for (var r = 0; r < 4; r++) {
@@ -396,7 +396,13 @@ var DiceScene = (function () {
     atlasTex.flipY = false;
 
     var geo = buildRoundedGeometry(dod, 13, 14);
-    var hullVerts = dod.verts.map(function (v) { return new CANNON.Vec3(v[0] * U, v[1] * U, v[2] * U); });
+    var makeHull = function (u) {
+      return new CANNON.ConvexPolyhedron({
+        vertices: dod.verts.map(function (v) { return new CANNON.Vec3(v[0] * u, v[1] * u, v[2] * u); }),
+        faces: dod.faces.map(function (f) { return f.slice(); })
+      });
+    };
+    this._makeHull = makeHull;
 
     this.dice = [];
     var defs = [
@@ -410,8 +416,7 @@ var DiceScene = (function () {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       scene.add(mesh);
-      var shape = new CANNON.ConvexPolyhedron({ vertices: hullVerts, faces: dod.faces.map(function (f) { return f.slice(); }) });
-      var body = new CANNON.Body({ mass: 1.2, material: diceMat, shape: shape });
+      var body = new CANNON.Body({ mass: 1.2, material: diceMat, shape: makeHull(U) });
       body.linearDamping = 0.04;
       body.angularDamping = 0.07;
       body.allowSleep = true;
@@ -490,10 +495,12 @@ var DiceScene = (function () {
     ];
     for (var i = 0; i < 4; i++) {
       var d = defs[i], rim = this.rims[i], body = this.wallBodies[i], lip = this.lips[i];
-      rim.scale.set(d.sx, wallH, d.sz);
-      rim.position.set(d.x, wallH / 2 - 0.02, d.z);
+      // przednia (dolna na ekranie) listwa niższa, żeby nie zasłaniać i nie świecić
+      var vh = (i === 1) ? wallH * 0.45 : wallH;
+      rim.scale.set(d.sx, vh, d.sz);
+      rim.position.set(d.x, vh / 2 - 0.02, d.z);
       lip.scale.set(d.sx + 0.02, wallT * 0.22, d.sz + 0.02);
-      lip.position.set(d.x, wallH - wallT * 0.1, d.z);
+      lip.position.set(d.x, vh - wallT * 0.1, d.z);
       body.shapes[0].halfExtents.set(d.sx / 2, wallH * 2, d.sz / 2);
       body.shapes[0].updateConvexPolyhedronRepresentation();
       body.shapes[0].updateBoundingSphereRadius();
@@ -518,9 +525,31 @@ var DiceScene = (function () {
     }
   };
 
+  P._idealU = function () {
+    return Math.max(0.5, Math.min(this.rect.w, this.rect.h) / 8.6);
+  };
+
+  /** Przebudowa rozmiaru kostek, gdy taca istotnie zmieniła proporcje. */
+  P._resizeDice = function () {
+    var ideal = this._idealU();
+    if (Math.abs(ideal - this.U) / this.U < 0.12) return;
+    this.U = ideal;
+    for (var i = 0; i < 2; i++) {
+      var d = this.dice[i];
+      d.mesh.scale.setScalar(ideal);
+      while (d.body.shapes.length) d.body.removeShape(d.body.shapes[0]);
+      d.body.addShape(this._makeHull(ideal));
+      d.body.updateMassProperties();
+      d.body.updateBoundingRadius();
+      d.body.position.y = Math.max(d.body.position.y, ideal + 0.01);
+      d.body.wakeUp();
+    }
+  };
+
   P.setInsets = function (ins) {
     this.insets = ins;
     this._computeRect();
+    this._resizeDice();
     this._layoutTray();
     this._clampDice();
   };
@@ -529,6 +558,7 @@ var DiceScene = (function () {
     var W = this.canvas.clientWidth, H = this.canvas.clientHeight;
     this.renderer.setSize(W, H, false);
     this._computeRect();
+    this._resizeDice();
     this._layoutTray();
     this._clampDice();
   };
@@ -675,10 +705,13 @@ var DiceScene = (function () {
       var b = this.dice[i].body;
       b.wakeUp();
       b.position.y = Math.max(b.position.y, U * 2.2);
-      var dx = r.cx - b.position.x, dz = r.cz - b.position.z;
+      // każda kostka celuje w inny punkt — nie klinują się na środku
+      var tx = r.cx + (i === 0 ? -1 : 1) * r.w * 0.14 + (Math.random() - 0.5) * U * 2;
+      var tz = r.cz + (Math.random() - 0.5) * r.h * 0.3;
+      var dx = tx - b.position.x, dz = tz - b.position.z;
       var l = Math.hypot(dx, dz) || 1;
-      var sp = U * (13 + Math.random() * 7);
-      b.velocity.set(dx / l * sp + (Math.random() - 0.5) * U * 6, U * (5 + Math.random() * 2), dz / l * sp + (Math.random() - 0.5) * U * 6);
+      var sp = U * (11 + Math.random() * 6);
+      b.velocity.set(dx / l * sp, U * (4.5 + Math.random() * 2), dz / l * sp);
       var s = 14 + Math.random() * 9;
       b.angularVelocity.set((Math.random() - 0.5) * s * 2, (Math.random() - 0.5) * s, (Math.random() - 0.5) * s * 2);
     }
@@ -790,7 +823,7 @@ var DiceScene = (function () {
     }
     if (!calm) { this._settleTimer = 0; return; }
     this._settleTimer += dt;
-    if (this._settleTimer < 0.55) return;
+    if (this._settleTimer < 0.4) return;
 
     // sprawdź przekrzywienie
     var results = [], cocked = false;
@@ -799,18 +832,18 @@ var DiceScene = (function () {
       results.push(r);
       if (r.dot < 0.985) cocked = true;
     }
-    if (cocked && this._cockedTries < 3) {
+    if (cocked && this._cockedTries < 4) {
       this._cockedTries++;
       this._settleTimer = 0;
       for (var m = 0; m < 2; m++) {
         var bb = this.dice[m].body;
         if (results[m].dot < 0.985) {
           bb.wakeUp();
-          bb.position.y += U * 0.8;
-          bb.position.x += (this.rect.cx - bb.position.x) * 0.15;
-          bb.position.z += (this.rect.cz - bb.position.z) * 0.15;
-          bb.velocity.set((Math.random() - 0.5) * U * 4, U * 3.4, (Math.random() - 0.5) * U * 4);
-          bb.angularVelocity.set((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 8);
+          bb.position.y += U * 0.55;
+          bb.position.x += (this.rect.cx - bb.position.x) * 0.34;
+          bb.position.z += (this.rect.cz - bb.position.z) * 0.34;
+          bb.velocity.set((Math.random() - 0.5) * U * 2.5, U * 2.4, (Math.random() - 0.5) * U * 2.5);
+          bb.angularVelocity.set((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 6);
         }
       }
       return;
