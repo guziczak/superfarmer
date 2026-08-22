@@ -14648,11 +14648,14 @@ var DiceScene = (function () {
       vs.push([s[i] / PHI, s[j] * PHI, 0]);
       vs.push([s[i] * PHI, 0, s[j] / PHI]);
     }
+    // normalne ścianek: kierunki wierzchołków ikozaedru DUALNEGO do tego
+    // zestawu wierzchołków — wzór (0,±φ,±1)/(±φ,±1,0)/(±1,0,±φ);
+    // (zamiana 1↔φ daje ikozaedr obrócony o 26.565° — NIE ścianki tej bryły!)
     var fnRaw = [];
     for (i = 0; i < 2; i++) for (j = 0; j < 2; j++) {
-      fnRaw.push([0, s[i], s[j] * PHI]);
-      fnRaw.push([s[i], s[j] * PHI, 0]);
-      fnRaw.push([s[i] * PHI, 0, s[j]]);
+      fnRaw.push([0, s[i] * PHI, s[j]]);
+      fnRaw.push([s[i] * PHI, s[j], 0]);
+      fnRaw.push([s[i], 0, s[j] * PHI]);
     }
     var norm = function (v) {
       var l = Math.hypot(v[0], v[1], v[2]);
@@ -14680,11 +14683,10 @@ var DiceScene = (function () {
         var bb = Math.atan2(dot([B[0] - c[0], B[1] - c[1], B[2] - c[2]], b), dot([B[0] - c[0], B[1] - c[1], B[2] - c[2]], t));
         return aa - bb;
       });
-      // cannon-es oczekuje nawinięcia CW patrząc z zewnątrz (konwencja cannon.js),
-      // więc wymuszamy (B-A)×(C-A) DO WEWNĄTRZ
+      // nawinięcie CCW patrząc z zewnątrz — cannon-es liczy wtedy normalne NA ZEWNĄTRZ
       var A = vs[five[0]], B = vs[five[1]], C = vs[five[2]];
       var w = cross([B[0] - A[0], B[1] - A[1], B[2] - A[2]], [C[0] - A[0], C[1] - A[1], C[2] - A[2]]);
-      if (dot(w, n) > 0) five.reverse();
+      if (dot(w, n) < 0) five.reverse();
       faces.push(five);
     }
     // przeskaluj tak, aby odległość ścianki od środka = 1
@@ -15502,20 +15504,20 @@ var DiceScene = (function () {
     this._settleTimer += dt;
     if (this._settleTimer < 0.4 && !overtime) return;
 
-    // sprawdź przekrzywienie: lekkie (< ~20°) dosnapuj bez podskoku,
-    // poważne (kostka oparta o coś) — podrzuć jeszcze raz
+    // kostka wolnostojąca osiada <0.05° od poziomu sama z siebie;
+    // każdy większy przechył = kostka o coś oparta => uczciwy przerzut
     var results = [], leaning = false;
     for (var j = 0; j < 2; j++) {
       var r = this._faceUp(this.dice[j]);
       results.push(r);
-      if (r.dot < 0.94) leaning = true;
+      if (r.dot < 0.99996) leaning = true;
     }
-    if (leaning && this._cockedTries < 4 && !overtime) {
+    if (leaning && this._cockedTries < 5 && !overtime) {
       this._cockedTries++;
       this._settleTimer = 0;
       for (var m = 0; m < 2; m++) {
         var bb = this.dice[m].body;
-        if (results[m].dot < 0.94) {
+        if (results[m].dot < 0.99996) {
           bb.wakeUp();
           var cdx = this.rect.cx - bb.position.x, cdz = this.rect.cz - bb.position.z;
           var cl = Math.hypot(cdx, cdz) || 1;

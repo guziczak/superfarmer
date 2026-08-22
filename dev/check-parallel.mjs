@@ -8,9 +8,9 @@ const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const s = [1, -1];
 const fnRaw = [];
 for (const i of s) for (const j of s) {
-  fnRaw.push([0, i, j * PHI]);
-  fnRaw.push([i, j * PHI, 0]);
-  fnRaw.push([i * PHI, 0, j]);
+  fnRaw.push([0, i * PHI, j]);
+  fnRaw.push([i * PHI, j, 0]);
+  fnRaw.push([i, 0, j * PHI]);
 }
 const normals = fnRaw.map(norm);
 
@@ -23,7 +23,8 @@ for (const i of s) for (const j of s) {
   vs.push([i * PHI, 0, j / PHI]);
 }
 
-let worstPair = 1, worstH = 0;
+let worstPair = 1;
+let worstSpread = 0; // rozrzut iloczynów skalarnych 5 wierzchołków ścianki — MUSI być ~0
 const hs = [];
 for (let i = 0; i < 12; i++) {
   // najbliższa -n_i
@@ -32,19 +33,20 @@ for (let i = 0; i < 12; i++) {
     if (j !== i) best = Math.min(best, dot(normals[i], normals[j]));
   }
   worstPair = Math.min(worstPair, -best); // 1.0 = idealnie antyrównoległa para
-  // odległość płaszczyzny ścianki (max po wierzchołkach)
-  let h = -1e9;
-  for (const v of vs) h = Math.max(h, dot(v, normals[i]));
-  hs.push(h);
+  // 5 wierzchołków o największym dot — czy leżą we WSPÓLNEJ płaszczyźnie?
+  const dots = vs.map(v => dot(v, normals[i])).sort((a, b) => b - a).slice(0, 5);
+  worstSpread = Math.max(worstSpread, dots[0] - dots[4]);
+  hs.push(dots[0]);
 }
 const hMin = Math.min(...hs), hMax = Math.max(...hs);
 console.log('Antyrównoległość najgorszej pary ścianek: dot(n_i, n_j) = -' + worstPair.toFixed(15));
 console.log('  (dokładnie -1 = idealnie równoległe, przeciwległe)');
+console.log('Współpłaszczyznowość ścianek: rozrzut dotów 5 wierzchołków = ' + worstSpread.toExponential(3));
+console.log('  (~0 = każda piątka wierzchołków naprawdę tworzy płaską ściankę o tej normalnej)');
 console.log('Odległości płaszczyzn 12 ścianek od środka: min=' + hMin.toFixed(15) + ' max=' + hMax.toFixed(15));
-console.log('  (identyczne => bryła foremna, każda ścianka tak samo daleko)');
 console.log('Różnica h: ' + (hMax - hMin).toExponential(3));
-if (Math.abs(worstPair - 1) < 1e-12 && Math.abs(hMax - hMin) < 1e-12) {
-  console.log('\nOK: 6 par ścianek DOKŁADNIE równoległych, bryła foremna.');
+if (Math.abs(worstPair - 1) < 1e-12 && Math.abs(hMax - hMin) < 1e-12 && worstSpread < 1e-12) {
+  console.log('\nOK: bryła foremna, normalne = prawdziwe ścianki, 6 par idealnie równoległych.');
 } else {
   console.log('\nBŁĄD GEOMETRII!');
   process.exit(1);
