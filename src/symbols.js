@@ -114,7 +114,7 @@ var SYMBOLS = (function () {
     },
 
     sheep: {
-      fill: '#ece3cb',
+      fill: '#e0d2ad',
       body: [
         E(50, 52, 17, 14), E(38, 56, 14, 12), E(63, 56, 14, 12),
         E(44, 46, 12, 10), E(58, 46, 12, 10), E(51, 62, 16, 12),
@@ -290,7 +290,7 @@ var SYMBOLS = (function () {
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(size / 100, size / 100);
-    var ow = 2.6 * (outlineScale || 1);
+    var ow = 3.1 * (outlineScale || 1);
     var i;
     for (i = 0; i < d.body.length; i++) drawPrim(ctx, d.body[i], 'outline', null, INK, ow);
     for (i = 0; i < d.body.length; i++) drawPrim(ctx, d.body[i], 'fill', d.fill, null, 0);

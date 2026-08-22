@@ -13967,7 +13967,7 @@ var SYMBOLS = (function () {
     },
 
     sheep: {
-      fill: '#ece3cb',
+      fill: '#e0d2ad',
       body: [
         E(50, 52, 17, 14), E(38, 56, 14, 12), E(63, 56, 14, 12),
         E(44, 46, 12, 10), E(58, 46, 12, 10), E(51, 62, 16, 12),
@@ -14143,7 +14143,7 @@ var SYMBOLS = (function () {
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(size / 100, size / 100);
-    var ow = 2.6 * (outlineScale || 1);
+    var ow = 3.1 * (outlineScale || 1);
     var i;
     for (i = 0; i < d.body.length; i++) drawPrim(ctx, d.body[i], 'outline', null, INK, ow);
     for (i = 0; i < d.body.length; i++) drawPrim(ctx, d.body[i], 'fill', d.fill, null, 0);
@@ -15025,8 +15025,8 @@ var DiceScene = (function () {
       body.linearDamping = 0.04;
       body.angularDamping = 0.07;
       body.allowSleep = true;
-      body.sleepSpeedLimit = 0.9;
-      body.sleepTimeLimit = 0.35;
+      body.sleepSpeedLimit = U * 0.35;
+      body.sleepTimeLimit = 0.5;
       body.userData = { kind: 'die', index: d };
       world.addBody(body);
       this.dice.push({ mesh: mesh, body: body, symbols: defs[d].symbols });
@@ -15146,9 +15146,10 @@ var DiceScene = (function () {
       d.body.addShape(this._makeHull(ideal));
       d.body.updateMassProperties();
       d.body.updateBoundingRadius();
-      d.body.position.y = Math.max(d.body.position.y, ideal + 0.01);
-      d.body.wakeUp();
+      d.body.sleepSpeedLimit = ideal * 0.35;
     }
+    // po zmianie rozmiaru ustaw kostki na czysto (o ile nie są w locie)
+    if (this.state === 'idle') this._restDice(false);
   };
 
   P.setInsets = function (ins) {

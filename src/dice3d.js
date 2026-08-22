@@ -420,8 +420,8 @@ var DiceScene = (function () {
       body.linearDamping = 0.04;
       body.angularDamping = 0.07;
       body.allowSleep = true;
-      body.sleepSpeedLimit = 0.9;
-      body.sleepTimeLimit = 0.35;
+      body.sleepSpeedLimit = U * 0.35;
+      body.sleepTimeLimit = 0.5;
       body.userData = { kind: 'die', index: d };
       world.addBody(body);
       this.dice.push({ mesh: mesh, body: body, symbols: defs[d].symbols });
@@ -541,9 +541,10 @@ var DiceScene = (function () {
       d.body.addShape(this._makeHull(ideal));
       d.body.updateMassProperties();
       d.body.updateBoundingRadius();
-      d.body.position.y = Math.max(d.body.position.y, ideal + 0.01);
-      d.body.wakeUp();
+      d.body.sleepSpeedLimit = ideal * 0.35;
     }
+    // po zmianie rozmiaru ustaw kostki na czysto (o ile nie są w locie)
+    if (this.state === 'idle') this._restDice(false);
   };
 
   P.setInsets = function (ins) {
@@ -798,7 +799,7 @@ var DiceScene = (function () {
       for (var i = 0; i < 2; i++) {
         var b = this.dice[i].body;
         b.wakeUp();
-        var off = (i === 0 ? -1.15 : 1.15) * U;
+        var off = (i === 0 ? -1.6 : 1.6) * U;
         var tx = this._target.x + off, tz = this._target.z;
         var ty = U * 2.1;
         var k = 130, c = 11;
