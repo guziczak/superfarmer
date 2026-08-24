@@ -352,6 +352,9 @@ var HUD = (function () {
     $('netform').hidden = true;
     $('netconn').hidden = true;
     $('btnNet').hidden = !(typeof NET !== 'undefined' && NET.available());
+    var nr = $('btnNetResume');
+    nr.hidden = !o.netResume;
+    if (o.netResume) nr.textContent = 'Wznów: ' + o.netResume;
     if (o.names && !$('inpNetName').value) $('inpNetName').value = o.names[0] || '';
     if (o.names) {
       $('inpName1').value = o.names[0] || '';
@@ -456,6 +459,7 @@ var HUD = (function () {
       $('netform').hidden = true;
       $('modeButtons').hidden = false;
     });
+    $('btnNetResume').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
     $('btnNetHost').addEventListener('click', function () { AUDIO.ui(); cb.onNetHost($('inpNetName').value.trim(), currentBias()); });
     $('btnNetJoin').addEventListener('click', function () { AUDIO.ui(); cb.onNetJoin($('inpNetName').value.trim()); });
     $('btnNetCancel').addEventListener('click', function () { AUDIO.ui(); cb.onNetCancel(); });

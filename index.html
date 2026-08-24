@@ -901,6 +901,7 @@ button {
   </div>
   <div class="modes" id="netform" hidden>
     <input class="nameinput" id="inpNetName" maxlength="14" placeholder="Twoje imię" autocomplete="off">
+    <button id="btnNetResume" class="btn pri" hidden>Wznów przerwaną grę</button>
     <button id="btnNetHost" class="btn pri">Załóż grę — pokaż kod</button>
     <button id="btnNetJoin" class="btn sec">Dołącz — zeskanuj kod</button>
     <button id="btnNetBack" class="link">← wróć</button>
@@ -29074,6 +29075,9 @@ var HUD = (function () {
     $('netform').hidden = true;
     $('netconn').hidden = true;
     $('btnNet').hidden = !(typeof NET !== 'undefined' && NET.available());
+    var nr = $('btnNetResume');
+    nr.hidden = !o.netResume;
+    if (o.netResume) nr.textContent = 'Wznów: ' + o.netResume;
     if (o.names && !$('inpNetName').value) $('inpNetName').value = o.names[0] || '';
     if (o.names) {
       $('inpName1').value = o.names[0] || '';
@@ -29178,6 +29182,7 @@ var HUD = (function () {
       $('netform').hidden = true;
       $('modeButtons').hidden = false;
     });
+    $('btnNetResume').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
     $('btnNetHost').addEventListener('click', function () { AUDIO.ui(); cb.onNetHost($('inpNetName').value.trim(), currentBias()); });
     $('btnNetJoin').addEventListener('click', function () { AUDIO.ui(); cb.onNetJoin($('inpNetName').value.trim()); });
     $('btnNetCancel').addEventListener('click', function () { AUDIO.ui(); cb.onNetCancel(); });
@@ -29271,6 +29276,7 @@ var HUD = (function () {
   var LS_TUT = 'sf3d.tutorial';
   var LS_NAMES = 'sf3d.names';
   var LS_BIAS = 'sf3d.bias';
+  var LS_NETSAVE = 'sf3d.netsave.v1';
 
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -29366,6 +29372,33 @@ var HUD = (function () {
     while (netQ.length) handleNetMsg(netQ.shift());
   }
 
+  /* Zapis przerwanej gry sieciowej: po każdej turze, na OBU urządzeniach.
+     Zerwanie łącza go zostawia (można wznowić po ponownym sparowaniu),
+     celowe wyjście do menu i koniec gry — czyszczą. */
+  function netSave() {
+    if (!isNet() || S.phase === 'gameover') return;
+    var c = JSON.parse(JSON.stringify(S));
+    c.phase = 'preroll';
+    lsSet(LS_NETSAVE, JSON.stringify({ v: 1, myIdx: NETLOCAL, state: c }));
+  }
+
+  function loadNetSave() {
+    try {
+      var d = JSON.parse(lsGet(LS_NETSAVE) || 'null');
+      if (d && d.v === 1 && (d.myIdx === 0 || d.myIdx === 1) &&
+          d.state && d.state.players && d.state.players.length === 2) return d;
+    } catch (e) {}
+    return null;
+  }
+
+  function clearNetSave() { lsDel(LS_NETSAVE); }
+
+  function netResumeLabel() {
+    var ns = loadNetSave();
+    if (!ns) return null;
+    return ns.state.players[0].name + ' vs ' + ns.state.players[1].name + ' · runda ' + ns.state.turnCount;
+  }
+
   /* ---------- pętla tury ---------- */
   function beginTurn() {
     var g = GEN;
@@ -29373,6 +29406,7 @@ var HUD = (function () {
     S.exchangeUsed = false;
     dlog('beginTurn cur=', S.cur, 'turn=', S.turnCount);
     save();
+    netSave();
     HUD.refresh(S);
     HUD.banner(turnBannerText(), S.cur === 0 ? 'green' : 'orange');
     if (isNet() && S.cur !== NETLOCAL) {
@@ -29439,7 +29473,7 @@ var HUD = (function () {
       netStart(NETLOCAL === 0 ? 'host' : 'guest', S.players.map(function (p) { return p.name; }), S.bias);
       return;
     }
-    if (m.t === 'bye') { netEnd('Przeciwnik wyszedł z gry'); }
+    if (m.t === 'bye') { clearNetSave(); netEnd('Przeciwnik wyszedł z gry'); }
   }
 
   function onNetMsg(m) {
@@ -29458,11 +29492,30 @@ var HUD = (function () {
     handleNetMsg(m);
   }
 
-  function netStart(role, names, bias) {
-    NETLOCAL = role === 'host' ? 0 : 1;
+  function netStart(role, names, bias, resume) {
     netQ = [];
     stopNetStream();
-    startGame('net', names, bias);
+    if (resume && resume.state) {
+      // wznowienie przerwanej gry: pełny stan przychodzi od zakładającego
+      NETLOCAL = role === 'host' ? resume.hostIdx : 1 - resume.hostIdx;
+      GEN++;
+      S = resume.state;
+      S.mode = 'net';
+      S.phase = 'preroll';
+      if (!S.bias || S.bias.length !== 2) S.bias = [0, 0];
+      dice.setBias(S.bias);
+      HUD.hideStart();
+      HUD.hideWin();
+      HUD.closeSheets();
+      HUD.buildCards(S);
+      HUD.refresh(S);
+      HUD.feed({ who: 0, whoName: '', text: 'Wznowiono przerwaną grę (runda ' + S.turnCount + ')' });
+      syncInsets();
+      beginTurn();
+    } else {
+      NETLOCAL = role === 'host' ? 0 : 1;
+      startGame('net', names, bias);
+    }
     HUD.netDot('on');
   }
 
@@ -29506,7 +29559,7 @@ var HUD = (function () {
     };
   }
 
-  function netConnectFlow(role, name, bias) {
+  function netConnectFlow(role, name, bias, wantResume) {
     netName = name || (role === 'host' ? 'Gracz 1' : 'Gracz 2');
     var netBias = bias && bias.length === 2 ? bias : [0, 0];
     $id('netform').hidden = true;
@@ -29529,16 +29582,24 @@ var HUD = (function () {
       onMsg: function (m) {
         if (m.t === 'hi') {
           if (role === 'host') {
-            var names = [netName, m.name || 'Gracz 2'];
-            NET.send({ t: 'go', names: names, bias: netBias });
-            netUiDone();
-            netStart('host', names, netBias);
+            var rs = wantResume ? loadNetSave() : null;
+            if (rs) {
+              NET.send({ t: 'go', resume: { state: rs.state, hostIdx: rs.myIdx } });
+              netUiDone();
+              netStart('host', null, null, { state: rs.state, hostIdx: rs.myIdx });
+            } else {
+              var names = [netName, m.name || 'Gracz 2'];
+              NET.send({ t: 'go', names: names, bias: netBias });
+              netUiDone();
+              netStart('host', names, netBias);
+            }
           }
           return;
         }
         if (m.t === 'go') {
           netUiDone();
-          netStart('guest', m.names, m.bias);
+          if (m.resume && m.resume.state) netStart('guest', null, null, m.resume);
+          else netStart('guest', m.names, m.bias);
           return;
         }
         onNetMsg(m);
@@ -29696,6 +29757,7 @@ var HUD = (function () {
   function finishGame(winner) {
     S.phase = 'gameover';
     lsDel(LS_SAVE);
+    if (isNet()) clearNetSave();
     dice.setInteractive(false);
     HUD.refresh(S);
     HUD.setDock('off');
@@ -29754,7 +29816,7 @@ var HUD = (function () {
     HUD.hideWin();
     HUD.closeSheets();
     dice.setInteractive(false);
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: storedBias() });
+    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: storedBias(), netResume: netResumeLabel() });
   }
 
   function storedNames() {
@@ -29909,10 +29971,11 @@ var HUD = (function () {
       },
       onBackToMenu: function () {
         AUDIO.ui();
-        if (isNet()) { NET.send({ t: 'bye' }); netEnd(null); return; }
+        if (isNet()) { clearNetSave(); NET.send({ t: 'bye' }); netEnd(null); return; }
         backToMenu();
       },
       onNetHost: function (name, bias) { AUDIO.unlock(); netConnectFlow('host', name, bias); },
+      onNetResume: function () { AUDIO.unlock(); netConnectFlow('host', null, null, true); },
       onNetJoin: function (name) { AUDIO.unlock(); netConnectFlow('guest', name, null); },
       onNetCancel: function () { netCancel(); }
     });
@@ -29930,7 +29993,7 @@ var HUD = (function () {
     }, { passive: false });
 
     syncInsets();
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: storedBias() });
+    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: storedBias(), netResume: netResumeLabel() });
     // uchwyt diagnostyczny (devtools)
     window.__SF = { dice: dice, get state() { return S; } };
   }
