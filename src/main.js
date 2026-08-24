@@ -8,7 +8,6 @@
   var LS_SOUND = 'sf3d.sound';
   var LS_TUT = 'sf3d.tutorial';
   var LS_NAMES = 'sf3d.names';
-  var LS_BIAS = 'sf3d.bias';
   var LS_NETSAVE = 'sf3d.netsave.v1';
 
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -549,25 +548,15 @@
     HUD.hideWin();
     HUD.closeSheets();
     dice.setInteractive(false);
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: storedBias(), netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
   }
 
   function storedNames() {
     try { return JSON.parse(lsGet(LS_NAMES) || 'null'); } catch (e) { return null; }
   }
 
-  function storedBias() {
-    try {
-      var a = JSON.parse(lsGet(LS_BIAS) || 'null');
-      if (a && a.length === 2 && isFinite(a[0]) && isFinite(a[1])) {
-        return [
-          Math.max(-0.25, Math.min(0.25, +a[0])),
-          Math.max(-0.25, Math.min(0.25, +a[1]))
-        ];
-      }
-    } catch (e) {}
-    return [0, 0];
-  }
+  // Obciążenie kostek celowo NIE jest zapamiętywane między sesjami:
+  // każdy nowy start zaczyna od kostek uczciwych (suwaki na środku).
 
   /* ---------- insets / resize ---------- */
   function syncInsets() {
@@ -677,13 +666,12 @@
       onModeStart: function (mode, names, bias) {
         AUDIO.unlock(); AUDIO.ui();
         if (mode === 'duo' && names) lsSet(LS_NAMES, JSON.stringify(names));
-        lsSet(LS_BIAS, JSON.stringify(bias && bias.length === 2 ? bias : [0, 0]));
         startGame(mode, names, bias);
       },
       onResume: function () {
         AUDIO.unlock(); AUDIO.ui();
         var s = loadSave();
-        if (s) resumeGame(s); else startGame('solo', null, storedBias());
+        if (s) resumeGame(s); else startGame('solo', null, [0, 0]);
       },
       onRestart: function () {
         if (isNet()) {
@@ -700,7 +688,7 @@
           netStart(NETLOCAL === 0 ? 'host' : 'guest', S.players.map(function (p) { return p.name; }), S.bias);
           return;
         }
-        startGame(S ? S.mode : 'solo', S ? S.players.map(function (p) { return p.name; }) : null, S ? S.bias : storedBias());
+        startGame(S ? S.mode : 'solo', S ? S.players.map(function (p) { return p.name; }) : null, S ? S.bias : [0, 0]);
       },
       onBackToMenu: function () {
         AUDIO.ui();
@@ -726,7 +714,7 @@
     }, { passive: false });
 
     syncInsets();
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: storedBias(), netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
     // uchwyt diagnostyczny (devtools)
     window.__SF = { dice: dice, get state() { return S; } };
   }
