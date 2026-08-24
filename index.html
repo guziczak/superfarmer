@@ -28127,6 +28127,7 @@ var DiceScene = (function () {
     atlasTex.colorSpace = THREE.SRGBColorSpace;
     atlasTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     atlasTex.flipY = false;
+    this._atlasTex = atlasTex;
 
     var geo = buildRoundedGeometry(dod, 13, 14);
     var makeHull = function (u) {
@@ -28404,8 +28405,9 @@ var DiceScene = (function () {
   };
 
   /* ---------- podgląd 3D kostek w panelu zaawansowanym ----------
-     Małe sceny z prawdziwą geometrią/materiałem kostek; plomba pokazuje stronę
-     i siłę ciężarka. Renderowane tylko przy zmianie suwaka. */
+     Kostka PÓŁPRZEZROCZYSTA, a w środku mosiężna kula-ciężarek na PRAWDZIWEJ
+     pozycji wzdłuż osi drapieżnik↔przeciwległa: 0 = środek bryły, ±100% = kula
+     dotyka ścianki od wewnątrz. Oś leży poziomo, zgodnie z kierunkiem suwaka. */
   P.previewBias = function (cvA, cvB, biasArr) {
     if (!this._prev) {
       this._prev = [];
@@ -28417,7 +28419,7 @@ var DiceScene = (function () {
         r.outputColorSpace = THREE.SRGBColorSpace;
         r.toneMapping = THREE.ACESFilmicToneMapping;
         var sc = new THREE.Scene();
-        sc.environment = this.scene.environment; // mosiądz plomby potrzebuje odbić
+        sc.environment = this.scene.environment; // mosiądz potrzebuje odbić
         sc.add(new THREE.HemisphereLight('#ffeccb', '#3a2c1c', 1.0));
         var dl = new THREE.DirectionalLight('#ffe6bd', 2.2);
         dl.position.set(-2, 3, 4);
@@ -28426,30 +28428,32 @@ var DiceScene = (function () {
         cam.position.set(0, 0.7, 4.6);
         cam.lookAt(0, 0, 0);
         var die = this.dice[i];
-        var mesh = new THREE.Mesh(die.mesh.geometry, die.mesh.material);
-        var plugs = [this._makePlug(die.predFace), this._makePlug(die.antiFace)];
-        mesh.add(plugs[0]);
-        mesh.add(plugs[1]);
-        sc.add(mesh);
-        this._prev.push({ r: r, sc: sc, cam: cam, plugs: plugs, mesh: mesh, n: this.dod.normals[die.predFace] });
+        var shellMat = makeDieMaterial(this.dod, this._atlasTex, die.symbols, '#' + die.mesh.material.color.getHexString());
+        shellMat.transparent = true;
+        shellMat.opacity = 0.4;
+        shellMat.depthWrite = false;
+        var shell = new THREE.Mesh(die.mesh.geometry, shellMat);
+        shell.renderOrder = 2; // skorupa MALOWANA PO kuli → kula widoczna „w środku”
+        if (!this._brassMat) this._makePlug(die.predFace); // inicjalizacja materiału
+        var ball = new THREE.Mesh(new THREE.SphereGeometry(0.155, 20, 14), this._brassMat);
+        ball.renderOrder = 1;
+        shell.add(ball);
+        // oś drapieżnik↔przeciwległa poziomo: drapieżnik w prawo (jak suwak)
+        var n = this.dod.normals[die.predFace];
+        shell.quaternion.setFromUnitVectors(
+          new THREE.Vector3(n[0], n[1], n[2]),
+          new THREE.Vector3(0.93, 0.14, 0.34).normalize()
+        );
+        sc.add(shell);
+        this._prev.push({ r: r, sc: sc, cam: cam, ball: ball, n: n });
       }
     }
     for (var j = 0; j < 2; j++) {
       var e = (biasArr && biasArr[j]) || 0;
       var pv = this._prev[j];
-      pv.plugs[0].visible = e > 0.02;
-      pv.plugs[1].visible = e < -0.02;
-      var s = 0.7 + 1.9 * Math.min(1, Math.abs(e));
-      pv.plugs[0].scale.setScalar(s);
-      pv.plugs[1].scale.setScalar(s);
-      // obciążona ścianka zawsze widoczna, po stronie zgodnej z suwakiem:
-      // plus → drapieżnik w prawo-przód; minus → przeciwległa w lewo-przód
-      var neg = e < -0.02;
-      var from = neg
-        ? new THREE.Vector3(-pv.n[0], -pv.n[1], -pv.n[2])
-        : new THREE.Vector3(pv.n[0], pv.n[1], pv.n[2]);
-      var to = new THREE.Vector3(neg ? -0.72 : 0.72, 0.22, 0.66).normalize();
-      pv.mesh.quaternion.setFromUnitVectors(from, to);
+      pv.ball.visible = Math.abs(e) > 0.01;
+      var t = e * (1 - 0.155); // przy ±100% kula styka się ze ścianką od wewnątrz
+      pv.ball.position.set(pv.n[0] * t, pv.n[1] * t, pv.n[2] * t);
       pv.r.render(pv.sc, pv.cam);
     }
   };
