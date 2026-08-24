@@ -585,7 +585,21 @@ button {
   background: #fff;
   align-self: center;
   image-rendering: pixelated;
+  cursor: pointer;
+  pointer-events: auto;
 }
+/* tapnięty kod QR: na cały ekran (łatwiej skanować z daleka, np. kamerką laptopa) */
+.qrout.big {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 30;
+  border-radius: 0;
+  padding: max(4vmin, var(--sat));
+  object-fit: contain;
+}
+.qrhint { font-size: 11.5px; color: var(--cream-faint); text-align: center; margin-top: -6px; }
 .camwrap {
   width: min(70vw, 260px);
   align-self: center;
@@ -593,8 +607,18 @@ button {
   overflow: hidden;
   border: 1px solid var(--line-strong);
   background: #0a0603;
+  position: relative;
 }
 .camwrap video { width: 100%; display: block; }
+.camtip {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  font-size: 11px;
+  padding: 4px 8px;
+  background: rgba(10, 6, 3, 0.7);
+  color: var(--cream-dim);
+  text-align: center;
+}
 .pastewrap { display: flex; flex-direction: column; gap: 8px; }
 .codebox {
   width: 100%;

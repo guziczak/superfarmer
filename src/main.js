@@ -232,6 +232,7 @@
         var cv = $id('qrOut');
         cv.hidden = false;
         try { NET.drawQR(cv, code); } catch (e) { cv.hidden = true; }
+        $id('qrHint').hidden = cv.hidden;
         $id('myCode').value = code;
       },
       video: $id('qrCam'),
@@ -249,6 +250,8 @@
     $id('netform').hidden = true;
     $id('netconn').hidden = false;
     $id('qrOut').hidden = true;
+    $id('qrOut').classList.remove('big');
+    $id('qrHint').hidden = true;
     $id('pasteWrap').hidden = true;
     $id('camWrap').hidden = false;
     $id('myCode').value = '';
@@ -289,6 +292,7 @@
 
   function netUiDone() {
     NET.stopScan();
+    $id('qrOut').classList.remove('big');
     $id('netconn').hidden = true;
     $id('modeButtons').hidden = false;
   }

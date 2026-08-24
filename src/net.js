@@ -78,7 +78,7 @@ var NET = (function () {
     qr.make();
     var n = qr.getModuleCount();
     var quiet = 4;
-    var px = Math.max(2, Math.floor(560 / (n + quiet * 2)));
+    var px = Math.max(3, Math.floor(768 / (n + quiet * 2)));
     var size = (n + quiet * 2) * px;
     canvas.width = size;
     canvas.height = size;
@@ -99,19 +99,34 @@ var NET = (function () {
       onFail('Brak dostępu do kamery (potrzebne HTTPS)');
       return Promise.resolve(false);
     }
-    return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false }).then(function (stream) {
+    return navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    }).then(function (stream) {
       video.srcObject = stream;
       video.muted = true;
       video.setAttribute('playsinline', '');
       var pv = video.play();
       if (pv && pv.catch) pv.catch(function () {});
+      // poproś o ciągły autofokus, jeśli kamera go ma (telefony tak, laptopy zwykle nie)
+      try {
+        var track = stream.getVideoTracks()[0];
+        var caps = track.getCapabilities ? track.getCapabilities() : {};
+        if (caps.focusMode && caps.focusMode.indexOf('continuous') >= 0) {
+          track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function () {});
+        }
+      } catch (e) {}
       var cv = document.createElement('canvas');
       var cx = cv.getContext('2d', { willReadFrequently: true });
+      var hi = false;
       scan = {
         stream: stream,
         timer: setInterval(function () {
           if (!video.videoWidth) return;
-          var w = Math.min(560, video.videoWidth);
+          // na przemian: szybki skan 640px i pełna rozdzielczość — QR trzymany
+          // daleko od kamery (laptop ze stałą ostrością!) potrzebuje dużo pikseli
+          hi = !hi;
+          var w = Math.min(hi ? 1280 : 640, video.videoWidth);
           var h = Math.round(video.videoHeight * w / video.videoWidth);
           cv.width = w; cv.height = h;
           cx.drawImage(video, 0, 0, w, h);
@@ -123,7 +138,7 @@ var NET = (function () {
             stopScan();
             onCode(code);
           }
-        }, 160)
+        }, 180)
       };
       return true;
     }).catch(function (err) {

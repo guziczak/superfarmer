@@ -459,6 +459,9 @@ var HUD = (function () {
     $('btnNetHost').addEventListener('click', function () { AUDIO.ui(); cb.onNetHost($('inpNetName').value.trim(), currentBias()); });
     $('btnNetJoin').addEventListener('click', function () { AUDIO.ui(); cb.onNetJoin($('inpNetName').value.trim()); });
     $('btnNetCancel').addEventListener('click', function () { AUDIO.ui(); cb.onNetCancel(); });
+    $('qrOut').addEventListener('click', function () {
+      $('qrOut').classList.toggle('big');
+    });
     $('btnNetPaste').addEventListener('click', function () {
       AUDIO.ui();
       $('pasteWrap').hidden = !$('pasteWrap').hidden;
