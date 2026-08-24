@@ -713,7 +713,18 @@ var DiceScene = (function () {
         shell.add(ball);
         var n = this.dod.normals[die.predFace];
         sc.add(shell);
-        this._prev.push({ r: r, sc: sc, cam: cam, ball: ball, shell: shell, n: n });
+        var pv0 = {
+          r: r, sc: sc, cam: cam, ball: ball, shell: shell, n: n,
+          tq: new THREE.Quaternion(), tp: new THREE.Vector3(), ts: 0
+        };
+        pv0.tq.setFromUnitVectors(
+          new THREE.Vector3(n[0], n[1], n[2]),
+          new THREE.Vector3(0.66, 0.2, 0.72).normalize()
+        );
+        shell.quaternion.copy(pv0.tq);
+        ball.scale.setScalar(0.0001);
+        ball.visible = false;
+        this._prev.push(pv0);
       }
     }
     for (var j = 0; j < 2; j++) {
