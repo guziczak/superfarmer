@@ -54,6 +54,8 @@ function buildDodeca() {
 }
 
 const U = 1.18;
+// opcjonalne obciążenie kostek jak w trybie zaawansowanym: node dev/settle-sim.mjs 0.25 | -0.25
+const BIAS = Number(process.argv[2]) || 0;
 const rect = { x0: -9, x1: 9, z0: -5.2, z1: 5.2, cx: 0, cz: 0, w: 18, h: 10.4 };
 const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -34, 0) });
 world.allowSleep = true;
@@ -84,7 +86,9 @@ for (let d = 0; d < 2; d++) {
     vertices: dod.verts.map(v => new CANNON.Vec3(v[0] * U, v[1] * U, v[2] * U)),
     faces: dod.faces.map(f => f.slice())
   });
-  const body = new CANNON.Body({ mass: 1.2, material: diceMat, shape });
+  const body = new CANNON.Body({ mass: 1.2, material: diceMat });
+  body.addShape(shape, new CANNON.Vec3(
+    -BIAS * U * dod.normals[11][0], -BIAS * U * dod.normals[11][1], -BIAS * U * dod.normals[11][2]));
   body.linearDamping = 0.09;
   body.angularDamping = 0.14;
   body.allowSleep = true;

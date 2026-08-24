@@ -8,6 +8,7 @@
   var LS_SOUND = 'sf3d.sound';
   var LS_TUT = 'sf3d.tutorial';
   var LS_NAMES = 'sf3d.names';
+  var LS_BIAS = 'sf3d.bias';
 
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -36,7 +37,7 @@
   }
 
   /* ---------- stan ---------- */
-  function newState(mode, names) {
+  function newState(mode, names, bias) {
     names = names || [];
     var players = mode === 'solo'
       ? [{ name: 'Ty', isBot: false }, { name: 'Zenek 🤖', isBot: true }]
@@ -44,6 +45,7 @@
     players.forEach(function (p) { p.herd = RULES.emptyHerd(); });
     return {
       mode: mode,
+      bias: bias && bias.length === 2 ? bias : [0, 0],
       players: players,
       stock: JSON.parse(JSON.stringify(RULES.STOCK_INIT)),
       cur: 0,
@@ -255,9 +257,10 @@
   }
 
   /* ---------- akcje HUD ---------- */
-  function startGame(mode, names) {
+  function startGame(mode, names, bias) {
     GEN++;
-    S = newState(mode, names);
+    S = newState(mode, names, bias);
+    dice.setBias(S.bias);
     HUD.hideStart();
     HUD.hideWin();
     HUD.closeSheets();
@@ -271,6 +274,8 @@
   function resumeGame(saved) {
     GEN++;
     S = saved;
+    if (!S.bias || S.bias.length !== 2) S.bias = [0, 0];
+    dice.setBias(S.bias);
     HUD.hideStart();
     HUD.hideWin();
     HUD.closeSheets();
@@ -286,11 +291,24 @@
     HUD.hideWin();
     HUD.closeSheets();
     dice.setInteractive(false);
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames() });
+    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: storedBias() });
   }
 
   function storedNames() {
     try { return JSON.parse(lsGet(LS_NAMES) || 'null'); } catch (e) { return null; }
+  }
+
+  function storedBias() {
+    try {
+      var a = JSON.parse(lsGet(LS_BIAS) || 'null');
+      if (a && a.length === 2 && isFinite(a[0]) && isFinite(a[1])) {
+        return [
+          Math.max(-0.25, Math.min(0.25, +a[0])),
+          Math.max(-0.25, Math.min(0.25, +a[1]))
+        ];
+      }
+    } catch (e) {}
+    return [0, 0];
   }
 
   /* ---------- insets / resize ---------- */
@@ -387,20 +405,21 @@
         lsSet(LS_SOUND, AUDIO.isEnabled() ? '1' : '0');
         if (AUDIO.isEnabled()) AUDIO.ui();
       },
-      onModeStart: function (mode, names) {
+      onModeStart: function (mode, names, bias) {
         AUDIO.unlock(); AUDIO.ui();
         if (mode === 'duo' && names) lsSet(LS_NAMES, JSON.stringify(names));
-        startGame(mode, names);
+        lsSet(LS_BIAS, JSON.stringify(bias && bias.length === 2 ? bias : [0, 0]));
+        startGame(mode, names, bias);
       },
       onResume: function () {
         AUDIO.unlock(); AUDIO.ui();
         var s = loadSave();
-        if (s) resumeGame(s); else startGame('solo');
+        if (s) resumeGame(s); else startGame('solo', null, storedBias());
       },
       onRestart: function () {
-        if (S && S.mode) startGame(S.mode, S.players.map(function (p) { return p.name; })); else backToMenu();
+        if (S && S.mode) startGame(S.mode, S.players.map(function (p) { return p.name; }), S.bias); else backToMenu();
       },
-      onAgain: function () { AUDIO.ui(); startGame(S ? S.mode : 'solo', S ? S.players.map(function (p) { return p.name; }) : null); },
+      onAgain: function () { AUDIO.ui(); startGame(S ? S.mode : 'solo', S ? S.players.map(function (p) { return p.name; }) : null, S ? S.bias : storedBias()); },
       onBackToMenu: function () { AUDIO.ui(); backToMenu(); }
     });
 
@@ -417,7 +436,7 @@
     }, { passive: false });
 
     syncInsets();
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames() });
+    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: storedBias() });
     // uchwyt diagnostyczny (devtools)
     window.__SF = { dice: dice, get state() { return S; } };
   }

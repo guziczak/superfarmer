@@ -557,6 +557,32 @@ button {
 }
 .nameinput::placeholder { color: var(--cream-faint); font-weight: 400; }
 .nameinput:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
+/* zaawansowane: obciążone kostki */
+.advpanel { width: min(340px, 88vw); margin: -8px auto 18px; text-align: left; }
+.advlabel {
+  font-size: 12px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--cream-faint);
+  margin-bottom: 10px;
+  text-align: center;
+}
+.biasrow { margin-bottom: 12px; }
+.biashead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--cream);
+  margin-bottom: 2px;
+}
+.biashead b { color: var(--amber); font-weight: 800; font-variant-numeric: tabular-nums; }
+.biasrow input[type="range"] { width: 100%; height: 28px; accent-color: var(--amber); margin: 0; }
+.biasends { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--cream-faint); }
+.advnote { font-size: 12.5px; line-height: 1.5; color: var(--cream-faint); margin-top: 6px; text-align: center; }
+.menurow.static { pointer-events: none; }
+
 .overlay .linkrow { display: flex; gap: 20px; justify-content: center; }
 .overlay .link {
   font-size: 14px;
@@ -786,8 +812,23 @@ button {
     <button id="btnDuoGo" class="btn pri">Zaczynamy!</button>
     <button id="btnDuoBack" class="link">← wróć</button>
   </div>
+  <div id="advpanel" class="advpanel" hidden>
+    <div class="advlabel">Środek ciężkości kostek</div>
+    <div class="biasrow">
+      <div class="biashead"><span>Kostka jasna — wilk</span><b id="biasPctA">8,3%</b></div>
+      <input type="range" id="biasA" min="-100" max="100" step="5" value="0" aria-label="Obciążenie kostki jasnej">
+      <div class="biasends"><span>ciężarek przy wilku — rzadziej</span><span>naprzeciw — częściej</span></div>
+    </div>
+    <div class="biasrow">
+      <div class="biashead"><span>Kostka złota — lis</span><b id="biasPctB">8,3%</b></div>
+      <input type="range" id="biasB" min="-100" max="100" step="5" value="0" aria-label="Obciążenie kostki złotej">
+      <div class="biasends"><span>ciężarek przy lisie — rzadziej</span><span>naprzeciw — częściej</span></div>
+    </div>
+    <div class="advnote">Fizycznie obciążone kostki: mosiężna kropka pokazuje ściankę z ciężarkiem. Suwak na środku = kostka uczciwa (każda ścianka 8,3%).</div>
+  </div>
   <div class="linkrow">
     <button class="link" id="btnRules0">Zasady</button>
+    <button class="link" id="btnAdv">Zaawansowane</button>
     <button class="link" id="btnSound0"></button>
   </div>
   <div class="credits">Gra Karola Borsuka · realizacja 3D — kostki k12 z prawdziwą fizyką</div>
@@ -14924,6 +14965,8 @@ var DiceScene = (function () {
     this._impactLast = 0;
     this._settleTimer = 0;
     this._cockedTries = 0;
+    this.bias = [0, 0]; // obciążenie [kostka A, kostka B] w ułamkach U; + = ciężarek przy drapieżniku
+    this._tmpV = new THREE.Vector3();
 
     var W = this.canvas.clientWidth || window.innerWidth;
     var H = this.canvas.clientHeight || window.innerHeight;
@@ -15068,7 +15111,7 @@ var DiceScene = (function () {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       scene.add(mesh);
-      var body = new CANNON.Body({ mass: 1.2, material: diceMat, shape: makeHull(U) });
+      var body = new CANNON.Body({ mass: 1.2, material: diceMat });
       body.linearDamping = 0.09;
       body.angularDamping = 0.14;
       body.allowSleep = true;
@@ -15076,7 +15119,23 @@ var DiceScene = (function () {
       body.sleepTimeLimit = 0.4;
       body.userData = { kind: 'die', index: d };
       world.addBody(body);
-      this.dice.push({ mesh: mesh, body: body, symbols: defs[d].symbols, thrown: false, locked: false });
+      // oś obciążenia: ścianka drapieżnika (wilk/lis) i przeciwległa
+      var pf = defs[d].symbols.indexOf('wolf');
+      if (pf < 0) pf = defs[d].symbols.indexOf('fox');
+      var af = -1;
+      for (var q2 = 0; q2 < 12; q2++) {
+        var dq = dod.normals[q2][0] * dod.normals[pf][0] + dod.normals[q2][1] * dod.normals[pf][1] + dod.normals[q2][2] * dod.normals[pf][2];
+        if (dq < -0.9999) af = q2;
+      }
+      var die = {
+        mesh: mesh, body: body, symbols: defs[d].symbols, thrown: false, locked: false,
+        predFace: pf, antiFace: af, shapeOff: new CANNON.Vec3(),
+        plugs: [this._makePlug(pf), this._makePlug(af)]
+      };
+      mesh.add(die.plugs[0]);
+      mesh.add(die.plugs[1]);
+      this.dice.push(die);
+      this._rebuildBody(d);
       this._bindImpact(body);
     }
     this._layoutTray();
@@ -15180,18 +15239,58 @@ var DiceScene = (function () {
   };
 
   /** Przebudowa rozmiaru kostek, gdy taca istotnie zmieniła proporcje. */
+  /** Mosiężna kropka — jawny znacznik ciężarka na wskazanej ściance. */
+  P._makePlug = function (face) {
+    if (!this._brassMat) {
+      this._brassMat = new THREE.MeshStandardMaterial({ color: '#c9a24b', metalness: 0.9, roughness: 0.35, envMapIntensity: 0.9 });
+    }
+    var n = this.dod.normals[face], t = this.dod.tangents[face];
+    var r = this.dod.faceR * 0.66;
+    var plug = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.018, 16), this._brassMat);
+    plug.position.set(n[0] * 1.003 + t[0] * r, n[1] * 1.003 + t[1] * r, n[2] * 1.003 + t[2] * r);
+    plug.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], n[2]));
+    plug.visible = false;
+    return plug;
+  };
+
+  /** (Prze)buduje bryłę fizyczną kostki `i` dla bieżącego U i obciążenia this.bias[i]:
+      hull dodany z offsetem -e·U·n_drapieżnika, czyli środek masy wędruje KU tej ściance
+      przy e > 0 (drapieżnik częściej na dole) i OD niej przy e < 0. */
+  P._rebuildBody = function (i) {
+    var d = this.dice[i], U = this.U;
+    var e = this.bias[i] || 0;
+    var n = this.dod.normals[d.predFace];
+    d.shapeOff.set(-e * U * n[0], -e * U * n[1], -e * U * n[2]);
+    while (d.body.shapes.length) d.body.removeShape(d.body.shapes[0]);
+    d.body.addShape(this._makeHull(U), new CANNON.Vec3(d.shapeOff.x, d.shapeOff.y, d.shapeOff.z));
+    d.body.updateMassProperties();
+    d.body.updateBoundingRadius();
+    d.body.sleepSpeedLimit = U * 0.28;
+    d.plugs[0].visible = e > 0.004;
+    d.plugs[1].visible = e < -0.004;
+  };
+
+  /** Obciążenie [eA, eB] w ułamkach U (±0.25). Stosować między rzutami. */
+  P.setBias = function (arr) {
+    var a = arr && arr.length === 2 ? arr : [0, 0];
+    this.bias = [
+      Math.max(-0.25, Math.min(0.25, +a[0] || 0)),
+      Math.max(-0.25, Math.min(0.25, +a[1] || 0))
+    ];
+    for (var i = 0; i < 2; i++) {
+      this._unlockDie(i);
+      this._rebuildBody(i);
+    }
+    if (this.state === 'idle') this._restDice(false);
+  };
+
   P._resizeDice = function () {
     var ideal = this._idealU();
     if (Math.abs(ideal - this.U) / this.U < 0.12) return;
     this.U = ideal;
     for (var i = 0; i < 2; i++) {
-      var d = this.dice[i];
-      d.mesh.scale.setScalar(ideal);
-      while (d.body.shapes.length) d.body.removeShape(d.body.shapes[0]);
-      d.body.addShape(this._makeHull(ideal));
-      d.body.updateMassProperties();
-      d.body.updateBoundingRadius();
-      d.body.sleepSpeedLimit = ideal * 0.28;
+      this.dice[i].mesh.scale.setScalar(ideal);
+      this._rebuildBody(i);
     }
     // po zmianie rozmiaru ustaw kostki na czysto (o ile nie są w locie)
     if (this.state === 'idle') this._restDice(false);
@@ -15237,7 +15336,9 @@ var DiceScene = (function () {
       var yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI * 2);
       yaw.multiply(q);
       b.quaternion.set(yaw.x, yaw.y, yaw.z, yaw.w);
-      b.position.set(r.cx + (i === 0 ? -1.35 : 1.35) * U, U + 0.01, r.cz + r.h * 0.18 + (i === 0 ? 0.2 : -0.2) * U);
+      var so = this.dice[i].shapeOff;
+      var oy = this._tmpV.set(so.x, so.y, so.z).applyQuaternion(yaw).y;
+      b.position.set(r.cx + (i === 0 ? -1.35 : 1.35) * U, U - oy + 0.01, r.cz + r.h * 0.18 + (i === 0 ? 0.2 : -0.2) * U);
       b.velocity.setZero();
       b.angularVelocity.setZero();
       b.sleep();
@@ -15501,8 +15602,12 @@ var DiceScene = (function () {
 
     for (var i = 0; i < 2; i++) {
       var d = this.dice[i];
-      d.mesh.position.copy(d.body.position);
       d.mesh.quaternion.copy(d.body.quaternion);
+      d.mesh.position.copy(d.body.position);
+      var so = d.shapeOff;
+      if (so.x !== 0 || so.y !== 0 || so.z !== 0) {
+        d.mesh.position.add(this._tmpV.set(so.x, so.y, so.z).applyQuaternion(d.mesh.quaternion));
+      }
     }
 
     // drganie kamery
@@ -15652,7 +15757,7 @@ var DiceScene = (function () {
   };
 
   P.getDieScreenPos = function (i) {
-    var v = new THREE.Vector3().copy(this.dice[i].body.position);
+    var v = new THREE.Vector3().copy(this.dice[i].mesh.position);
     v.project(this.camera);
     var W = this.canvas.clientWidth, H = this.canvas.clientHeight;
     return { x: (v.x + 1) / 2 * W, y: (-v.y + 1) / 2 * H };
@@ -15682,6 +15787,39 @@ var HUD = (function () {
 
   function spr(sym, px) { return SYMBOLS.sprite(sym, px || 26); }
   function img(sym, px) { return '<img alt="' + SYMBOLS.NAMES_PL[sym][0] + '" src="' + spr(sym, px) + '">'; }
+
+  /* ---------- obciążone kostki (tryb zaawansowany) ----------
+     Kalibracja z dev/bias-sim.mjs: % drapieżnika na górze przy ciężarku
+     KU jego ściance (RARE) i — z symetrii bryły — na ściance przeciwnej (OFTEN). */
+  var BIAS_MAX = 0.25;
+  var BIAS_RARE = [[0, 8.33], [0.05, 6.7], [0.10, 5.0], [0.15, 5.0], [0.20, 4.5], [0.25, 3.6]];
+  var BIAS_OFTEN = [[0, 8.33], [0.05, 11.0], [0.10, 14.7], [0.15, 15.9], [0.20, 19.8], [0.25, 23.4]];
+
+  function biasPct(e) {
+    var t = e >= 0 ? BIAS_RARE : BIAS_OFTEN;
+    var x = Math.min(BIAS_MAX, Math.abs(e));
+    for (var i = 1; i < t.length; i++) {
+      if (x <= t[i][0]) {
+        var f = (x - t[i - 1][0]) / (t[i][0] - t[i - 1][0]);
+        return t[i - 1][1] + f * (t[i][1] - t[i - 1][1]);
+      }
+    }
+    return t[t.length - 1][1];
+  }
+  function fmtPct(p) { return '~' + p.toFixed(1).replace('.', ',') + '%'; }
+  function sliderToE(v) { return -(v / 100) * BIAS_MAX; }
+  function eToSlider(e) { return Math.round(-(e / BIAS_MAX) * 100); }
+  function currentBias() { return [sliderToE(+$('biasA').value), sliderToE(+$('biasB').value)]; }
+  function refreshBiasUI() {
+    var b = currentBias();
+    $('biasPctA').textContent = fmtPct(biasPct(b[0]));
+    $('biasPctB').textContent = fmtPct(biasPct(b[1]));
+  }
+  function biasMenuText(S) {
+    var b = S && S.bias ? S.bias : [0, 0];
+    if (!b[0] && !b[1]) return 'uczciwe';
+    return 'wilk ' + fmtPct(biasPct(b[0])) + ' · lis ' + fmtPct(biasPct(b[1]));
+  }
 
   /* ---------- karty graczy ---------- */
   function buildCards(S) {
@@ -15963,6 +16101,7 @@ var HUD = (function () {
       '<button class="menurow" id="mSound"><span>Dźwięk</span><span class="state">' + (AUDIO.isEnabled() ? 'włączony' : 'wyłączony') + '</span></button>' +
       '<button class="menurow" id="mRules"><span>Zasady gry</span><span class="state">›</span></button>' +
       '<button class="menurow" id="mLog"><span>Historia gry</span><span class="state">›</span></button>' +
+      '<div class="menurow static"><span>Kostki</span><span class="state">' + biasMenuText(S) + '</span></div>' +
       '<button class="menurow" id="mRestart"><span>Nowa gra</span><span class="state">od początku</span></button>';
     $('mSound').addEventListener('click', function () {
       cb.onSoundToggle();
@@ -15976,6 +16115,11 @@ var HUD = (function () {
   /* ---------- start / wygrana ---------- */
   function showStart(o) {
     $('btnResume').hidden = !o.canResume;
+    var b = o.bias && o.bias.length === 2 ? o.bias : [0, 0];
+    $('biasA').value = eToSlider(b[0]);
+    $('biasB').value = eToSlider(b[1]);
+    refreshBiasUI();
+    $('advpanel').hidden = !(b[0] || b[1]);
     $('btnSound0').textContent = AUDIO.isEnabled() ? 'Dźwięk: wł.' : 'Dźwięk: wył.';
     $('modeButtons').hidden = false;
     $('nameform').hidden = true;
@@ -16055,7 +16199,14 @@ var HUD = (function () {
     $('btnMenu').addEventListener('click', function () { cb.onMenuOpen(); });
     $('feed').addEventListener('click', function () { renderLog(); openSheet('sheetLog'); AUDIO.ui(); });
     $('backdrop').addEventListener('click', function () { closeSheets(); });
-    $('btnSolo').addEventListener('click', function () { cb.onModeStart('solo'); });
+    $('btnAdv').addEventListener('click', function () {
+      AUDIO.ui();
+      var p = $('advpanel');
+      p.hidden = !p.hidden;
+    });
+    $('biasA').addEventListener('input', refreshBiasUI);
+    $('biasB').addEventListener('input', refreshBiasUI);
+    $('btnSolo').addEventListener('click', function () { cb.onModeStart('solo', null, currentBias()); });
     $('btnDuo').addEventListener('click', function () {
       AUDIO.ui();
       $('modeButtons').hidden = true;
@@ -16067,7 +16218,7 @@ var HUD = (function () {
       $('modeButtons').hidden = false;
     });
     var duoGo = function () {
-      cb.onModeStart('duo', [$('inpName1').value.trim(), $('inpName2').value.trim()]);
+      cb.onModeStart('duo', [$('inpName1').value.trim(), $('inpName2').value.trim()], currentBias());
     };
     $('btnDuoGo').addEventListener('click', duoGo);
     $('inpName1').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('inpName2').focus(); });
@@ -16130,6 +16281,7 @@ var HUD = (function () {
   var LS_SOUND = 'sf3d.sound';
   var LS_TUT = 'sf3d.tutorial';
   var LS_NAMES = 'sf3d.names';
+  var LS_BIAS = 'sf3d.bias';
 
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -16158,7 +16310,7 @@ var HUD = (function () {
   }
 
   /* ---------- stan ---------- */
-  function newState(mode, names) {
+  function newState(mode, names, bias) {
     names = names || [];
     var players = mode === 'solo'
       ? [{ name: 'Ty', isBot: false }, { name: 'Zenek 🤖', isBot: true }]
@@ -16166,6 +16318,7 @@ var HUD = (function () {
     players.forEach(function (p) { p.herd = RULES.emptyHerd(); });
     return {
       mode: mode,
+      bias: bias && bias.length === 2 ? bias : [0, 0],
       players: players,
       stock: JSON.parse(JSON.stringify(RULES.STOCK_INIT)),
       cur: 0,
@@ -16377,9 +16530,10 @@ var HUD = (function () {
   }
 
   /* ---------- akcje HUD ---------- */
-  function startGame(mode, names) {
+  function startGame(mode, names, bias) {
     GEN++;
-    S = newState(mode, names);
+    S = newState(mode, names, bias);
+    dice.setBias(S.bias);
     HUD.hideStart();
     HUD.hideWin();
     HUD.closeSheets();
@@ -16393,6 +16547,8 @@ var HUD = (function () {
   function resumeGame(saved) {
     GEN++;
     S = saved;
+    if (!S.bias || S.bias.length !== 2) S.bias = [0, 0];
+    dice.setBias(S.bias);
     HUD.hideStart();
     HUD.hideWin();
     HUD.closeSheets();
@@ -16408,11 +16564,24 @@ var HUD = (function () {
     HUD.hideWin();
     HUD.closeSheets();
     dice.setInteractive(false);
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames() });
+    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: storedBias() });
   }
 
   function storedNames() {
     try { return JSON.parse(lsGet(LS_NAMES) || 'null'); } catch (e) { return null; }
+  }
+
+  function storedBias() {
+    try {
+      var a = JSON.parse(lsGet(LS_BIAS) || 'null');
+      if (a && a.length === 2 && isFinite(a[0]) && isFinite(a[1])) {
+        return [
+          Math.max(-0.25, Math.min(0.25, +a[0])),
+          Math.max(-0.25, Math.min(0.25, +a[1]))
+        ];
+      }
+    } catch (e) {}
+    return [0, 0];
   }
 
   /* ---------- insets / resize ---------- */
@@ -16509,20 +16678,21 @@ var HUD = (function () {
         lsSet(LS_SOUND, AUDIO.isEnabled() ? '1' : '0');
         if (AUDIO.isEnabled()) AUDIO.ui();
       },
-      onModeStart: function (mode, names) {
+      onModeStart: function (mode, names, bias) {
         AUDIO.unlock(); AUDIO.ui();
         if (mode === 'duo' && names) lsSet(LS_NAMES, JSON.stringify(names));
-        startGame(mode, names);
+        lsSet(LS_BIAS, JSON.stringify(bias && bias.length === 2 ? bias : [0, 0]));
+        startGame(mode, names, bias);
       },
       onResume: function () {
         AUDIO.unlock(); AUDIO.ui();
         var s = loadSave();
-        if (s) resumeGame(s); else startGame('solo');
+        if (s) resumeGame(s); else startGame('solo', null, storedBias());
       },
       onRestart: function () {
-        if (S && S.mode) startGame(S.mode, S.players.map(function (p) { return p.name; })); else backToMenu();
+        if (S && S.mode) startGame(S.mode, S.players.map(function (p) { return p.name; }), S.bias); else backToMenu();
       },
-      onAgain: function () { AUDIO.ui(); startGame(S ? S.mode : 'solo', S ? S.players.map(function (p) { return p.name; }) : null); },
+      onAgain: function () { AUDIO.ui(); startGame(S ? S.mode : 'solo', S ? S.players.map(function (p) { return p.name; }) : null, S ? S.bias : storedBias()); },
       onBackToMenu: function () { AUDIO.ui(); backToMenu(); }
     });
 
@@ -16539,7 +16709,7 @@ var HUD = (function () {
     }, { passive: false });
 
     syncInsets();
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames() });
+    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: storedBias() });
     // uchwyt diagnostyczny (devtools)
     window.__SF = { dice: dice, get state() { return S; } };
   }

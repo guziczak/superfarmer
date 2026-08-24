@@ -14,6 +14,39 @@ var HUD = (function () {
   function spr(sym, px) { return SYMBOLS.sprite(sym, px || 26); }
   function img(sym, px) { return '<img alt="' + SYMBOLS.NAMES_PL[sym][0] + '" src="' + spr(sym, px) + '">'; }
 
+  /* ---------- obciążone kostki (tryb zaawansowany) ----------
+     Kalibracja z dev/bias-sim.mjs: % drapieżnika na górze przy ciężarku
+     KU jego ściance (RARE) i — z symetrii bryły — na ściance przeciwnej (OFTEN). */
+  var BIAS_MAX = 0.25;
+  var BIAS_RARE = [[0, 8.33], [0.05, 6.7], [0.10, 5.0], [0.15, 5.0], [0.20, 4.5], [0.25, 3.6]];
+  var BIAS_OFTEN = [[0, 8.33], [0.05, 11.0], [0.10, 14.7], [0.15, 15.9], [0.20, 19.8], [0.25, 23.4]];
+
+  function biasPct(e) {
+    var t = e >= 0 ? BIAS_RARE : BIAS_OFTEN;
+    var x = Math.min(BIAS_MAX, Math.abs(e));
+    for (var i = 1; i < t.length; i++) {
+      if (x <= t[i][0]) {
+        var f = (x - t[i - 1][0]) / (t[i][0] - t[i - 1][0]);
+        return t[i - 1][1] + f * (t[i][1] - t[i - 1][1]);
+      }
+    }
+    return t[t.length - 1][1];
+  }
+  function fmtPct(p) { return '~' + p.toFixed(1).replace('.', ',') + '%'; }
+  function sliderToE(v) { return -(v / 100) * BIAS_MAX; }
+  function eToSlider(e) { return Math.round(-(e / BIAS_MAX) * 100); }
+  function currentBias() { return [sliderToE(+$('biasA').value), sliderToE(+$('biasB').value)]; }
+  function refreshBiasUI() {
+    var b = currentBias();
+    $('biasPctA').textContent = fmtPct(biasPct(b[0]));
+    $('biasPctB').textContent = fmtPct(biasPct(b[1]));
+  }
+  function biasMenuText(S) {
+    var b = S && S.bias ? S.bias : [0, 0];
+    if (!b[0] && !b[1]) return 'uczciwe';
+    return 'wilk ' + fmtPct(biasPct(b[0])) + ' · lis ' + fmtPct(biasPct(b[1]));
+  }
+
   /* ---------- karty graczy ---------- */
   function buildCards(S) {
     var tb = $('topbar');
@@ -294,6 +327,7 @@ var HUD = (function () {
       '<button class="menurow" id="mSound"><span>Dźwięk</span><span class="state">' + (AUDIO.isEnabled() ? 'włączony' : 'wyłączony') + '</span></button>' +
       '<button class="menurow" id="mRules"><span>Zasady gry</span><span class="state">›</span></button>' +
       '<button class="menurow" id="mLog"><span>Historia gry</span><span class="state">›</span></button>' +
+      '<div class="menurow static"><span>Kostki</span><span class="state">' + biasMenuText(S) + '</span></div>' +
       '<button class="menurow" id="mRestart"><span>Nowa gra</span><span class="state">od początku</span></button>';
     $('mSound').addEventListener('click', function () {
       cb.onSoundToggle();
@@ -307,6 +341,11 @@ var HUD = (function () {
   /* ---------- start / wygrana ---------- */
   function showStart(o) {
     $('btnResume').hidden = !o.canResume;
+    var b = o.bias && o.bias.length === 2 ? o.bias : [0, 0];
+    $('biasA').value = eToSlider(b[0]);
+    $('biasB').value = eToSlider(b[1]);
+    refreshBiasUI();
+    $('advpanel').hidden = !(b[0] || b[1]);
     $('btnSound0').textContent = AUDIO.isEnabled() ? 'Dźwięk: wł.' : 'Dźwięk: wył.';
     $('modeButtons').hidden = false;
     $('nameform').hidden = true;
@@ -386,7 +425,14 @@ var HUD = (function () {
     $('btnMenu').addEventListener('click', function () { cb.onMenuOpen(); });
     $('feed').addEventListener('click', function () { renderLog(); openSheet('sheetLog'); AUDIO.ui(); });
     $('backdrop').addEventListener('click', function () { closeSheets(); });
-    $('btnSolo').addEventListener('click', function () { cb.onModeStart('solo'); });
+    $('btnAdv').addEventListener('click', function () {
+      AUDIO.ui();
+      var p = $('advpanel');
+      p.hidden = !p.hidden;
+    });
+    $('biasA').addEventListener('input', refreshBiasUI);
+    $('biasB').addEventListener('input', refreshBiasUI);
+    $('btnSolo').addEventListener('click', function () { cb.onModeStart('solo', null, currentBias()); });
     $('btnDuo').addEventListener('click', function () {
       AUDIO.ui();
       $('modeButtons').hidden = true;
@@ -398,7 +444,7 @@ var HUD = (function () {
       $('modeButtons').hidden = false;
     });
     var duoGo = function () {
-      cb.onModeStart('duo', [$('inpName1').value.trim(), $('inpName2').value.trim()]);
+      cb.onModeStart('duo', [$('inpName1').value.trim(), $('inpName2').value.trim()], currentBias());
     };
     $('btnDuoGo').addEventListener('click', duoGo);
     $('inpName1').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('inpName2').focus(); });

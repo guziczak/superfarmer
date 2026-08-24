@@ -274,6 +274,8 @@ var DiceScene = (function () {
     this._impactLast = 0;
     this._settleTimer = 0;
     this._cockedTries = 0;
+    this.bias = [0, 0]; // obciążenie [kostka A, kostka B] w ułamkach U; + = ciężarek przy drapieżniku
+    this._tmpV = new THREE.Vector3();
 
     var W = this.canvas.clientWidth || window.innerWidth;
     var H = this.canvas.clientHeight || window.innerHeight;
@@ -418,7 +420,7 @@ var DiceScene = (function () {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       scene.add(mesh);
-      var body = new CANNON.Body({ mass: 1.2, material: diceMat, shape: makeHull(U) });
+      var body = new CANNON.Body({ mass: 1.2, material: diceMat });
       body.linearDamping = 0.09;
       body.angularDamping = 0.14;
       body.allowSleep = true;
@@ -426,7 +428,23 @@ var DiceScene = (function () {
       body.sleepTimeLimit = 0.4;
       body.userData = { kind: 'die', index: d };
       world.addBody(body);
-      this.dice.push({ mesh: mesh, body: body, symbols: defs[d].symbols, thrown: false, locked: false });
+      // oś obciążenia: ścianka drapieżnika (wilk/lis) i przeciwległa
+      var pf = defs[d].symbols.indexOf('wolf');
+      if (pf < 0) pf = defs[d].symbols.indexOf('fox');
+      var af = -1;
+      for (var q2 = 0; q2 < 12; q2++) {
+        var dq = dod.normals[q2][0] * dod.normals[pf][0] + dod.normals[q2][1] * dod.normals[pf][1] + dod.normals[q2][2] * dod.normals[pf][2];
+        if (dq < -0.9999) af = q2;
+      }
+      var die = {
+        mesh: mesh, body: body, symbols: defs[d].symbols, thrown: false, locked: false,
+        predFace: pf, antiFace: af, shapeOff: new CANNON.Vec3(),
+        plugs: [this._makePlug(pf), this._makePlug(af)]
+      };
+      mesh.add(die.plugs[0]);
+      mesh.add(die.plugs[1]);
+      this.dice.push(die);
+      this._rebuildBody(d);
       this._bindImpact(body);
     }
     this._layoutTray();
@@ -530,18 +548,58 @@ var DiceScene = (function () {
   };
 
   /** Przebudowa rozmiaru kostek, gdy taca istotnie zmieniła proporcje. */
+  /** Mosiężna kropka — jawny znacznik ciężarka na wskazanej ściance. */
+  P._makePlug = function (face) {
+    if (!this._brassMat) {
+      this._brassMat = new THREE.MeshStandardMaterial({ color: '#c9a24b', metalness: 0.9, roughness: 0.35, envMapIntensity: 0.9 });
+    }
+    var n = this.dod.normals[face], t = this.dod.tangents[face];
+    var r = this.dod.faceR * 0.66;
+    var plug = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.018, 16), this._brassMat);
+    plug.position.set(n[0] * 1.003 + t[0] * r, n[1] * 1.003 + t[1] * r, n[2] * 1.003 + t[2] * r);
+    plug.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], n[2]));
+    plug.visible = false;
+    return plug;
+  };
+
+  /** (Prze)buduje bryłę fizyczną kostki `i` dla bieżącego U i obciążenia this.bias[i]:
+      hull dodany z offsetem -e·U·n_drapieżnika, czyli środek masy wędruje KU tej ściance
+      przy e > 0 (drapieżnik częściej na dole) i OD niej przy e < 0. */
+  P._rebuildBody = function (i) {
+    var d = this.dice[i], U = this.U;
+    var e = this.bias[i] || 0;
+    var n = this.dod.normals[d.predFace];
+    d.shapeOff.set(-e * U * n[0], -e * U * n[1], -e * U * n[2]);
+    while (d.body.shapes.length) d.body.removeShape(d.body.shapes[0]);
+    d.body.addShape(this._makeHull(U), new CANNON.Vec3(d.shapeOff.x, d.shapeOff.y, d.shapeOff.z));
+    d.body.updateMassProperties();
+    d.body.updateBoundingRadius();
+    d.body.sleepSpeedLimit = U * 0.28;
+    d.plugs[0].visible = e > 0.004;
+    d.plugs[1].visible = e < -0.004;
+  };
+
+  /** Obciążenie [eA, eB] w ułamkach U (±0.25). Stosować między rzutami. */
+  P.setBias = function (arr) {
+    var a = arr && arr.length === 2 ? arr : [0, 0];
+    this.bias = [
+      Math.max(-0.25, Math.min(0.25, +a[0] || 0)),
+      Math.max(-0.25, Math.min(0.25, +a[1] || 0))
+    ];
+    for (var i = 0; i < 2; i++) {
+      this._unlockDie(i);
+      this._rebuildBody(i);
+    }
+    if (this.state === 'idle') this._restDice(false);
+  };
+
   P._resizeDice = function () {
     var ideal = this._idealU();
     if (Math.abs(ideal - this.U) / this.U < 0.12) return;
     this.U = ideal;
     for (var i = 0; i < 2; i++) {
-      var d = this.dice[i];
-      d.mesh.scale.setScalar(ideal);
-      while (d.body.shapes.length) d.body.removeShape(d.body.shapes[0]);
-      d.body.addShape(this._makeHull(ideal));
-      d.body.updateMassProperties();
-      d.body.updateBoundingRadius();
-      d.body.sleepSpeedLimit = ideal * 0.28;
+      this.dice[i].mesh.scale.setScalar(ideal);
+      this._rebuildBody(i);
     }
     // po zmianie rozmiaru ustaw kostki na czysto (o ile nie są w locie)
     if (this.state === 'idle') this._restDice(false);
@@ -587,7 +645,9 @@ var DiceScene = (function () {
       var yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI * 2);
       yaw.multiply(q);
       b.quaternion.set(yaw.x, yaw.y, yaw.z, yaw.w);
-      b.position.set(r.cx + (i === 0 ? -1.35 : 1.35) * U, U + 0.01, r.cz + r.h * 0.18 + (i === 0 ? 0.2 : -0.2) * U);
+      var so = this.dice[i].shapeOff;
+      var oy = this._tmpV.set(so.x, so.y, so.z).applyQuaternion(yaw).y;
+      b.position.set(r.cx + (i === 0 ? -1.35 : 1.35) * U, U - oy + 0.01, r.cz + r.h * 0.18 + (i === 0 ? 0.2 : -0.2) * U);
       b.velocity.setZero();
       b.angularVelocity.setZero();
       b.sleep();
@@ -851,8 +911,12 @@ var DiceScene = (function () {
 
     for (var i = 0; i < 2; i++) {
       var d = this.dice[i];
-      d.mesh.position.copy(d.body.position);
       d.mesh.quaternion.copy(d.body.quaternion);
+      d.mesh.position.copy(d.body.position);
+      var so = d.shapeOff;
+      if (so.x !== 0 || so.y !== 0 || so.z !== 0) {
+        d.mesh.position.add(this._tmpV.set(so.x, so.y, so.z).applyQuaternion(d.mesh.quaternion));
+      }
     }
 
     // drganie kamery
@@ -1002,7 +1066,7 @@ var DiceScene = (function () {
   };
 
   P.getDieScreenPos = function (i) {
-    var v = new THREE.Vector3().copy(this.dice[i].body.position);
+    var v = new THREE.Vector3().copy(this.dice[i].mesh.position);
     v.project(this.camera);
     var W = this.canvas.clientWidth, H = this.canvas.clientHeight;
     return { x: (v.x + 1) / 2 * W, y: (-v.y + 1) / 2 * H };

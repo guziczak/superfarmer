@@ -71,8 +71,23 @@
     <button id="btnDuoGo" class="btn pri">Zaczynamy!</button>
     <button id="btnDuoBack" class="link">← wróć</button>
   </div>
+  <div id="advpanel" class="advpanel" hidden>
+    <div class="advlabel">Środek ciężkości kostek</div>
+    <div class="biasrow">
+      <div class="biashead"><span>Kostka jasna — wilk</span><b id="biasPctA">8,3%</b></div>
+      <input type="range" id="biasA" min="-100" max="100" step="5" value="0" aria-label="Obciążenie kostki jasnej">
+      <div class="biasends"><span>ciężarek przy wilku — rzadziej</span><span>naprzeciw — częściej</span></div>
+    </div>
+    <div class="biasrow">
+      <div class="biashead"><span>Kostka złota — lis</span><b id="biasPctB">8,3%</b></div>
+      <input type="range" id="biasB" min="-100" max="100" step="5" value="0" aria-label="Obciążenie kostki złotej">
+      <div class="biasends"><span>ciężarek przy lisie — rzadziej</span><span>naprzeciw — częściej</span></div>
+    </div>
+    <div class="advnote">Fizycznie obciążone kostki: mosiężna kropka pokazuje ściankę z ciężarkiem. Suwak na środku = kostka uczciwa (każda ścianka 8,3%).</div>
+  </div>
   <div class="linkrow">
     <button class="link" id="btnRules0">Zasady</button>
+    <button class="link" id="btnAdv">Zaawansowane</button>
     <button class="link" id="btnSound0"></button>
   </div>
   <div class="credits">Gra Karola Borsuka · realizacja 3D — kostki k12 z prawdziwą fizyką</div>
