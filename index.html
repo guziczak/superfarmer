@@ -28438,14 +28438,9 @@ var DiceScene = (function () {
         var ball = new THREE.Mesh(new THREE.SphereGeometry(0.155, 20, 14), this._brassMat);
         ball.renderOrder = 1;
         shell.add(ball);
-        // oś drapieżnik↔przeciwległa poziomo: drapieżnik w prawo (jak suwak)
         var n = this.dod.normals[die.predFace];
-        shell.quaternion.setFromUnitVectors(
-          new THREE.Vector3(n[0], n[1], n[2]),
-          new THREE.Vector3(0.93, 0.14, 0.34).normalize()
-        );
         sc.add(shell);
-        this._prev.push({ r: r, sc: sc, cam: cam, ball: ball, n: n });
+        this._prev.push({ r: r, sc: sc, cam: cam, ball: ball, shell: shell, n: n });
       }
     }
     for (var j = 0; j < 2; j++) {
@@ -28454,6 +28449,14 @@ var DiceScene = (function () {
       pv.ball.visible = Math.abs(e) > 0.01;
       var t = e * (1 - 0.155); // przy ±100% kula styka się ze ścianką od wewnątrz
       pv.ball.position.set(pv.n[0] * t, pv.n[1] * t, pv.n[2] * t);
+      // kostka dokręca się ścianką, ku której wędruje ciężarek:
+      // plus → drapieżnik z prawej-frontu, minus → przeciwległa z lewej-frontu
+      var neg = e < -0.01;
+      var from = neg
+        ? new THREE.Vector3(-pv.n[0], -pv.n[1], -pv.n[2])
+        : new THREE.Vector3(pv.n[0], pv.n[1], pv.n[2]);
+      var to = new THREE.Vector3(neg ? -0.66 : 0.66, 0.2, 0.72).normalize();
+      pv.shell.quaternion.setFromUnitVectors(from, to);
       pv.r.render(pv.sc, pv.cam);
     }
   };
