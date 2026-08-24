@@ -57,7 +57,7 @@
   }
 
   function save() {
-    if (!S || S.phase === 'gameover') return;
+    if (!S || S.phase === 'gameover' || S.mode === 'net') return;
     var c = JSON.parse(JSON.stringify(S));
     c.phase = 'preroll';
     lsSet(LS_SAVE, JSON.stringify(c));
@@ -79,7 +79,29 @@
   function isBotTurn() { return curP().isBot; }
   function turnBannerText() {
     if (S.mode === 'solo') return S.cur === 0 ? 'Twoja tura' : 'Teraz Zenek';
+    if (S.mode === 'net') return S.cur === NETLOCAL ? 'Twoja tura' : 'Teraz: ' + curP().name;
     return 'Teraz: ' + curP().name;
+  }
+
+  /* ---------- gra przez sieć: stan lokalny ---------- */
+  var NETLOCAL = -1;   // indeks lokalnego gracza w trybie net (host=0, gość=1)
+  var netQ = [];       // wiadomości odroczone na czas animacji rozstrzygania
+  var netStream = 0;
+
+  function isNet() { return !!S && S.mode === 'net'; }
+  function isNetLocalTurn() { return isNet() && S.cur === NETLOCAL; }
+
+  function stopNetStream() { if (netStream) { clearInterval(netStream); netStream = 0; } }
+  function startNetStream() {
+    if (netStream) return;
+    netStream = setInterval(function () {
+      if (!isNetLocalTurn() || !dice.isBusy()) return;
+      NET.send({ t: 'f', d: dice.getNetFrame() });
+    }, 40);
+  }
+
+  function flushNetQ() {
+    while (netQ.length) handleNetMsg(netQ.shift());
   }
 
   /* ---------- pętla tury ---------- */
@@ -91,15 +113,185 @@
     save();
     HUD.refresh(S);
     HUD.banner(turnBannerText(), S.cur === 0 ? 'green' : 'orange');
-    if (isBotTurn()) {
+    if (isNet() && S.cur !== NETLOCAL) {
+      dice.setRemoteDriven(false);
+      dice.setInteractive(false);
+      HUD.setDock('bot', { text: curP().name + ' gra na swoim telefonie…' });
+      flushNetQ();
+    } else if (isBotTurn()) {
       dice.setInteractive(false);
       HUD.setDock('bot', { text: 'Zenek przygląda się stadu…' });
       botTurn(g);
     } else {
+      if (isNet()) dice.setRemoteDriven(false);
       dice.setInteractive(true);
       HUD.setDock('preroll-human', { exchangeUsed: false });
       if (!lsGet(LS_TUT)) HUD.swipeHint(true);
+      flushNetQ();
     }
+  }
+
+  /* ---------- gra przez sieć: protokół ---------- */
+  function handleNetMsg(m) {
+    if (!isNet()) return;
+    if (m.t === 'ex') {
+      if (S.cur === NETLOCAL || S.phase !== 'preroll' || S.exchangeUsed) return;
+      var rate = null;
+      for (var i = 0; i < RULES.EXCHANGE_RATES.length; i++) {
+        if (RULES.EXCHANGE_RATES[i].id === m.id) rate = RULES.EXCHANGE_RATES[i];
+      }
+      if (!rate) return;
+      var res = RULES.applyExchange(curP().herd, S.stock, rate, m.dir, m.times);
+      if (!res) return;
+      curP().herd = res.herd;
+      S.stock = res.stock;
+      S.exchangeUsed = true;
+      AUDIO.coin();
+      var gv = m.dir > 0 ? rate.give : rate.get;
+      var gt = m.dir > 0 ? rate.get : rate.give;
+      var gvN = (m.dir > 0 ? rate.giveN : rate.getN) * m.times;
+      var gtN = (m.dir > 0 ? rate.getN : rate.giveN) * m.times;
+      HUD.feed({ who: S.cur, whoName: whoName(), icon: gt, text: whoName() + ' wymienia ' + plural(gv, gvN) + ' na ' + plural(gt, gtN) });
+      var anim = {}; anim[gt] = 1;
+      HUD.refresh(S, { player: S.cur, anim: anim });
+      if (RULES.checkWin(curP().herd)) finishGame(S.cur);
+      return;
+    }
+    if (m.t === 'roll') {
+      if (S.cur === NETLOCAL || (S.phase !== 'preroll' && S.phase !== 'rolling')) return;
+      dice.setRemoteDriven(true);
+      S.phase = 'rolling';
+      HUD.setDock('rolling');
+      HUD.dieLabels(null);
+      AUDIO.whoosh();
+      HUD.closeSheets();
+      return;
+    }
+    if (m.t === 'set') {
+      if (S.cur === NETLOCAL || S.phase !== 'rolling') return;
+      dice.endRemoteRoll();
+      resolveRoll(m.faces);
+      return;
+    }
+    if (m.t === 'again') {
+      netStart(NETLOCAL === 0 ? 'host' : 'guest', S.players.map(function (p) { return p.name; }), S.bias);
+      return;
+    }
+    if (m.t === 'bye') { netEnd('Przeciwnik wyszedł z gry'); }
+  }
+
+  function onNetMsg(m) {
+    if (!isNet()) return;
+    if (m.t === 'f') {
+      if (S.cur !== NETLOCAL && (S.phase === 'preroll' || S.phase === 'rolling')) {
+        dice.setRemoteDriven(true);
+        dice.applyNetFrame(m.d);
+      }
+      return;
+    }
+    if (S.phase === 'resolving' && (m.t === 'ex' || m.t === 'roll' || m.t === 'set')) {
+      netQ.push(m);
+      return;
+    }
+    handleNetMsg(m);
+  }
+
+  function netStart(role, names, bias) {
+    NETLOCAL = role === 'host' ? 0 : 1;
+    netQ = [];
+    stopNetStream();
+    startGame('net', names, bias);
+  }
+
+  function netEnd(msg) {
+    var wasNet = isNet();
+    NET.close();
+    NETLOCAL = -1;
+    stopNetStream();
+    netQ = [];
+    if (wasNet) {
+      dice.setRemoteDriven(false);
+      if (msg) {
+        HUD.feed({ who: 0, whoName: '', text: msg });
+        HUD.eventBig({ icon: null, t1: 'ROZŁĄCZONO', t2: msg, cls: 'bad' }, 2000);
+      }
+      backToMenu();
+    }
+  }
+
+  /* ---------- gra przez sieć: przepływ łączenia ---------- */
+  var $id = function (id) { return document.getElementById(id); };
+  var netName = '';
+
+  function netUiEls() {
+    return {
+      status: function (t) { $id('netStatus').textContent = t; },
+      showMyCode: function (code) {
+        var cv = $id('qrOut');
+        cv.hidden = false;
+        try { NET.drawQR(cv, code); } catch (e) { cv.hidden = true; }
+        $id('myCode').value = code;
+      },
+      video: $id('qrCam'),
+      cameraFailed: function (msg) {
+        $id('camWrap').hidden = true;
+        $id('netStatus').textContent = msg;
+        $id('pasteWrap').hidden = false;
+      }
+    };
+  }
+
+  function netConnectFlow(role, name, bias) {
+    netName = name || (role === 'host' ? 'Gracz 1' : 'Gracz 2');
+    var netBias = bias && bias.length === 2 ? bias : [0, 0];
+    $id('netform').hidden = true;
+    $id('netconn').hidden = false;
+    $id('qrOut').hidden = true;
+    $id('pasteWrap').hidden = true;
+    $id('camWrap').hidden = false;
+    $id('myCode').value = '';
+    $id('pasteIn').value = '';
+    var cbs = {
+      onOpen: function () {
+        $id('netStatus').textContent = 'Połączono!';
+        NET.send({ t: 'hi', name: netName });
+      },
+      onMsg: function (m) {
+        if (m.t === 'hi') {
+          if (role === 'host') {
+            var names = [netName, m.name || 'Gracz 2'];
+            NET.send({ t: 'go', names: names, bias: netBias });
+            netUiDone();
+            netStart('host', names, netBias);
+          }
+          return;
+        }
+        if (m.t === 'go') {
+          netUiDone();
+          netStart('guest', m.names, m.bias);
+          return;
+        }
+        onNetMsg(m);
+      },
+      onClose: function () {
+        if (isNet()) netEnd('Połączenie z drugim telefonem przerwane');
+        else $id('netStatus').textContent = 'Połączenie przerwane — spróbujcie od nowa';
+      }
+    };
+    if (role === 'host') NET.startHost(netUiEls(), cbs);
+    else NET.startGuest(netUiEls(), cbs);
+  }
+
+  function netUiDone() {
+    NET.stopScan();
+    $id('netconn').hidden = true;
+    $id('modeButtons').hidden = false;
+  }
+
+  function netCancel() {
+    NET.close();
+    $id('netconn').hidden = true;
+    $id('netform').hidden = false;
   }
 
   function botTurn(g) {
@@ -332,6 +524,11 @@
         onSettle: function (faces) {
           dlog('onSettle faces=', faces.join('+'), 'phase=', S && S.phase, 'cur=', S && S.cur);
           if (!S || S.phase !== 'rolling') return;
+          if (isNetLocalTurn()) {
+            NET.send({ t: 'f', d: dice.getNetFrame() });
+            NET.send({ t: 'set', faces: faces });
+            stopNetStream();
+          }
           resolveRoll(faces);
         },
         onImpact: function (kind, strength) {
@@ -348,12 +545,17 @@
           HUD.dieLabels(null);
           AUDIO.whoosh();
           HUD.closeSheets();
+          if (isNetLocalTurn()) {
+            NET.send({ t: 'roll' });
+            startNetStream();
+          }
         },
         onHold: function (held) {
           if (!S || S.phase !== 'preroll') return;
           if (held) {
             HUD.swipeHint(false);
             HUD.setDock('held');
+            if (isNetLocalTurn()) startNetStream();
           }
         }
       });
@@ -367,23 +569,24 @@
 
     HUD.init({
       onRollClick: function () {
-        if (!S || S.phase !== 'preroll' || isBotTurn()) return;
+        if (!S || S.phase !== 'preroll' || isBotTurn() || (isNet() && S.cur !== NETLOCAL)) return;
         AUDIO.ui();
         dice.throwAuto();
       },
       onExchangeOpen: function () {
-        if (!S || S.phase !== 'preroll' || isBotTurn() || S.exchangeUsed) return;
+        if (!S || S.phase !== 'preroll' || isBotTurn() || S.exchangeUsed || (isNet() && S.cur !== NETLOCAL)) return;
         AUDIO.ui();
         HUD.buildExchange(S);
         HUD.openSheet('sheetEx');
       },
       onExchangeApply: function (rate, dir, times, giveSym, getSym) {
-        if (!S || S.phase !== 'preroll' || S.exchangeUsed) return;
+        if (!S || S.phase !== 'preroll' || S.exchangeUsed || (isNet() && S.cur !== NETLOCAL)) return;
         var res = RULES.applyExchange(curP().herd, S.stock, rate, dir, times);
         if (!res) return;
         curP().herd = res.herd;
         S.stock = res.stock;
         S.exchangeUsed = true;
+        if (isNetLocalTurn()) NET.send({ t: 'ex', id: rate.id, dir: dir, times: times });
         AUDIO.coin();
         var gvN = (dir > 0 ? rate.giveN : rate.getN) * times;
         var gtN = (dir > 0 ? rate.getN : rate.giveN) * times;
@@ -417,10 +620,30 @@
         if (s) resumeGame(s); else startGame('solo', null, storedBias());
       },
       onRestart: function () {
+        if (isNet()) {
+          NET.send({ t: 'again' });
+          netStart(NETLOCAL === 0 ? 'host' : 'guest', S.players.map(function (p) { return p.name; }), S.bias);
+          return;
+        }
         if (S && S.mode) startGame(S.mode, S.players.map(function (p) { return p.name; }), S.bias); else backToMenu();
       },
-      onAgain: function () { AUDIO.ui(); startGame(S ? S.mode : 'solo', S ? S.players.map(function (p) { return p.name; }) : null, S ? S.bias : storedBias()); },
-      onBackToMenu: function () { AUDIO.ui(); backToMenu(); }
+      onAgain: function () {
+        AUDIO.ui();
+        if (isNet()) {
+          NET.send({ t: 'again' });
+          netStart(NETLOCAL === 0 ? 'host' : 'guest', S.players.map(function (p) { return p.name; }), S.bias);
+          return;
+        }
+        startGame(S ? S.mode : 'solo', S ? S.players.map(function (p) { return p.name; }) : null, S ? S.bias : storedBias());
+      },
+      onBackToMenu: function () {
+        AUDIO.ui();
+        if (isNet()) { NET.send({ t: 'bye' }); netEnd(null); return; }
+        backToMenu();
+      },
+      onNetHost: function (name, bias) { AUDIO.unlock(); netConnectFlow('host', name, bias); },
+      onNetJoin: function (name) { AUDIO.unlock(); netConnectFlow('guest', name, null); },
+      onNetCancel: function () { netCancel(); }
     });
 
     window.addEventListener('resize', function () {

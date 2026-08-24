@@ -275,6 +275,8 @@ var DiceScene = (function () {
     this._settleTimer = 0;
     this._cockedTries = 0;
     this.bias = [0, 0]; // obciążenie [kostka A, kostka B] w ułamkach U; + = ciężarek przy drapieżniku
+    this.remote = false; // true = kostki odtwarzają transmisję rzutu z drugiego telefonu
+    this._lastNet = null;
     this._tmpV = new THREE.Vector3();
 
     var W = this.canvas.clientWidth || window.innerWidth;
@@ -464,9 +466,18 @@ var DiceScene = (function () {
     };
     requestAnimationFrame(loop);
 
-    document.addEventListener('visibilitychange', function () {
-      self._clock.getDelta(); // zrzuć zaległy czas
-    });
+    this._bgTimer = 0;
+    var syncBg = function () {
+      if (document.visibilityState === 'hidden') {
+        self._clock.getDelta(); // zrzuć zaległy czas — tło dolicza od teraz
+        if (!self._bgTimer) self._bgTimer = setInterval(function () { self._tickHidden(); }, 250);
+      } else {
+        if (self._bgTimer) { clearInterval(self._bgTimer); self._bgTimer = 0; }
+        self._clock.getDelta();
+      }
+    };
+    document.addEventListener('visibilitychange', syncBg);
+    syncBg();
   }
 
   var P = DiceScene.prototype;
@@ -591,6 +602,74 @@ var DiceScene = (function () {
       this._rebuildBody(i);
     }
     if (this.state === 'idle') this._restDice(false);
+  };
+
+  /* ---------- transmisja rzutu między telefonami ----------
+     Rzut liczy fizyka na telefonie rzucającego; drugi telefon odtwarza wierny
+     replay z klatek. Pozycje normalizowane do tacy (różne ekrany = różne tace). */
+  P.getNetFrame = function () {
+    var r = this.rect, out = [];
+    for (var i = 0; i < 2; i++) {
+      var m = this.dice[i].mesh, p = m.position, q = m.quaternion;
+      out.push([
+        +((p.x - r.cx) / (r.w / 2)).toFixed(4),
+        +(p.y / this.U).toFixed(3),
+        +((p.z - r.cz) / (r.h / 2)).toFixed(4),
+        +q.x.toFixed(4), +q.y.toFixed(4), +q.z.toFixed(4), +q.w.toFixed(4)
+      ]);
+    }
+    return out;
+  };
+
+  P.setRemoteDriven = function (on) {
+    on = !!on;
+    if (this.remote === on) return;
+    this.remote = on;
+    if (on) {
+      this._lastNet = null;
+      for (var i = 0; i < 2; i++) {
+        var b = this.dice[i].body;
+        this._unlockDie(i);
+        b.velocity.setZero();
+        b.angularVelocity.setZero();
+        b.sleep();
+      }
+      this.state = 'idle';
+    }
+  };
+
+  P.applyNetFrame = function (d) {
+    if (!this.remote || !d || d.length !== 2) return;
+    var r = this.rect;
+    for (var i = 0; i < 2; i++) {
+      var m = this.dice[i].mesh, f = d[i];
+      m.position.set(r.cx + f[0] * (r.w / 2), f[1] * this.U, r.cz + f[2] * (r.h / 2));
+      m.quaternion.set(f[3], f[4], f[5], f[6]).normalize();
+    }
+    this._lastNet = d;
+  };
+
+  /** Koniec transmisji: przenieś finalne transformy z meshy na ciała fizyczne. */
+  P.endRemoteRoll = function () {
+    var d = this._lastNet, r = this.rect;
+    if (d) {
+      for (var i = 0; i < 2; i++) {
+        var die = this.dice[i], f = d[i], b = die.body;
+        die.mesh.quaternion.set(f[3], f[4], f[5], f[6]).normalize();
+        b.quaternion.set(die.mesh.quaternion.x, die.mesh.quaternion.y, die.mesh.quaternion.z, die.mesh.quaternion.w);
+        var wo = this._tmpV.set(die.shapeOff.x, die.shapeOff.y, die.shapeOff.z).applyQuaternion(die.mesh.quaternion);
+        b.position.set(
+          r.cx + f[0] * (r.w / 2) - wo.x,
+          f[1] * this.U - wo.y,
+          r.cz + f[2] * (r.h / 2) - wo.z
+        );
+        b.velocity.setZero();
+        b.angularVelocity.setZero();
+        b.sleep();
+      }
+    }
+    this.remote = false;
+    this._lastNet = null;
   };
 
   P._resizeDice = function () {
@@ -893,7 +972,7 @@ var DiceScene = (function () {
     // watchdog: kostka poza tacą lub pod stołem → ratunkowy powrót
     var r = this.rect, U = this.U;
     for (var w = 0; w < 2; w++) {
-      if (this.dice[w].locked) continue;
+      if (this.remote || this.dice[w].locked) continue;
       var wb = this.dice[w].body;
       if (wb.position.y < -U * 2 || wb.position.y > U * 30 ||
           wb.position.x < r.x0 - U * 4 || wb.position.x > r.x1 + U * 4 ||
@@ -909,15 +988,7 @@ var DiceScene = (function () {
       }
     }
 
-    for (var i = 0; i < 2; i++) {
-      var d = this.dice[i];
-      d.mesh.quaternion.copy(d.body.quaternion);
-      d.mesh.position.copy(d.body.position);
-      var so = d.shapeOff;
-      if (so.x !== 0 || so.y !== 0 || so.z !== 0) {
-        d.mesh.position.add(this._tmpV.set(so.x, so.y, so.z).applyQuaternion(d.mesh.quaternion));
-      }
-    }
+    this._syncMeshes();
 
     // drganie kamery
     if (this._shake > 0.002) {
@@ -935,6 +1006,36 @@ var DiceScene = (function () {
 
     this._checkSettle(dt);
     this.renderer.render(this.scene, this.camera);
+  };
+
+  P._syncMeshes = function () {
+    if (this.remote) return; // mesh sterowany transmisją z drugiego telefonu
+    for (var i = 0; i < 2; i++) {
+      var d = this.dice[i];
+      d.mesh.quaternion.copy(d.body.quaternion);
+      d.mesh.position.copy(d.body.position);
+      var so = d.shapeOff;
+      if (so.x !== 0 || so.y !== 0 || so.z !== 0) {
+        d.mesh.position.add(this._tmpV.set(so.x, so.y, so.z).applyQuaternion(d.mesh.quaternion));
+      }
+    }
+  };
+
+  /** Karta w tle: rAF stoi, więc lot kostek dolicza timer — te same kroki 1/120,
+      tylko inny zegar. Bez tego rzut zamiera, a w grze sieciowej przeciwnik czeka. */
+  P._tickHidden = function () {
+    if (this.state !== 'flying') return;
+    var dt = Math.min(2.5, this._clock.getDelta());
+    this._acc += dt;
+    var step = 1 / 120, guard = 0;
+    while (this._acc >= step && guard < 300) {
+      this._physStep(step);
+      this._acc -= step;
+      guard++;
+    }
+    if (guard >= 300) this._acc = 0;
+    this._syncMeshes();
+    this._checkSettle(dt);
   };
 
   P._physStep = function (step) {

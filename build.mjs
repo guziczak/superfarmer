@@ -24,14 +24,17 @@ cannon = '/* cannon-es 0.20.0 — global CANNON */\nvar CANNON=(function(){var e
   + cannon.replace(/^'use strict';\s*/, '')
   + '\nreturn exports;})();';
 
+const qrgen = read('vendor/qrcode.js');
+const jsqr = read('vendor/jsQR.js');
+
 /* ---------- źródła ---------- */
 const css = read('src/style.css');
 const markup = read('src/markup.html');
-const srcs = ['symbols.js', 'rules.js', 'audio.js', 'ai.js', 'dice3d.js', 'hud.js', 'main.js']
+const srcs = ['symbols.js', 'rules.js', 'audio.js', 'ai.js', 'net.js', 'dice3d.js', 'hud.js', 'main.js']
   .map((f) => `/* ===== src/${f} ===== */\n` + read('src/' + f))
   .join('\n\n');
 
-for (const chunk of [three, cannon, srcs]) {
+for (const chunk of [three, cannon, qrgen, jsqr, srcs]) {
   if (chunk.includes('</scr' + 'ipt>')) throw new Error('kod zawiera </scr' + 'ipt> — złamałby inline');
 }
 
@@ -43,6 +46,8 @@ const faviconSVG = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://
 
 const scripts = `<script>${three}</script>
 <script>${cannon}</script>
+<script>${qrgen}</script>
+<script>${jsqr}</script>
 <script>${srcs}</script>`;
 
 /* ---------- index.html (pełny dokument) ---------- */

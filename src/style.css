@@ -544,6 +544,42 @@ button {
 }
 .nameinput::placeholder { color: var(--cream-faint); font-weight: 400; }
 .nameinput:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
+/* gra przez sieć */
+.netconn { gap: 10px; }
+.netstatus { font-size: 14px; color: var(--cream-dim); line-height: 1.45; min-height: 20px; text-align: center; }
+.qrout {
+  width: min(64vw, 240px);
+  height: auto;
+  border-radius: 12px;
+  background: #fff;
+  align-self: center;
+  image-rendering: pixelated;
+}
+.camwrap {
+  width: min(70vw, 260px);
+  align-self: center;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  background: #0a0603;
+}
+.camwrap video { width: 100%; display: block; }
+.pastewrap { display: flex; flex-direction: column; gap: 8px; }
+.codebox {
+  width: 100%;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  background: rgba(255, 236, 200, 0.07);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  color: var(--cream);
+  padding: 8px;
+  resize: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* zaawansowane: obciążone kostki */
 .advpanel { width: min(340px, 88vw); margin: -8px auto 18px; text-align: left; }
 .advlabel {

@@ -64,6 +64,26 @@
     <button id="btnResume" class="btn pri" hidden>Wznów grę</button>
     <button id="btnSolo" class="btn pri">Graj z Zenkiem 🤖</button>
     <button id="btnDuo" class="btn sec">2 graczy — jeden telefon</button>
+    <button id="btnNet" class="btn sec">2 graczy — dwa telefony 📶</button>
+  </div>
+  <div class="modes" id="netform" hidden>
+    <input class="nameinput" id="inpNetName" maxlength="14" placeholder="Twoje imię" autocomplete="off">
+    <button id="btnNetHost" class="btn pri">Załóż grę — pokaż kod</button>
+    <button id="btnNetJoin" class="btn sec">Dołącz — zeskanuj kod</button>
+    <button id="btnNetBack" class="link">← wróć</button>
+  </div>
+  <div class="modes netconn" id="netconn" hidden>
+    <div id="netStatus" class="netstatus"></div>
+    <canvas id="qrOut" class="qrout" hidden></canvas>
+    <div id="camWrap" class="camwrap" hidden><video id="qrCam" muted playsinline></video></div>
+    <button id="btnNetPaste" class="link">kod ręcznie (kopiuj / wklej)</button>
+    <div id="pasteWrap" class="pastewrap" hidden>
+      <textarea id="myCode" class="codebox" rows="2" readonly placeholder="tu pojawi się Twój kod"></textarea>
+      <button id="btnCopyCode" class="btn sec">Kopiuj mój kod</button>
+      <textarea id="pasteIn" class="codebox" rows="2" placeholder="wklej kod drugiego gracza"></textarea>
+      <button id="btnPasteGo" class="btn sec">Zatwierdź wklejony kod</button>
+    </div>
+    <button id="btnNetCancel" class="link">← anuluj</button>
   </div>
   <div class="modes" id="nameform" hidden>
     <input class="nameinput" id="inpName1" maxlength="14" placeholder="Gracz 1" autocomplete="off" enterkeyhint="next">

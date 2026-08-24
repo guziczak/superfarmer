@@ -349,6 +349,10 @@ var HUD = (function () {
     $('btnSound0').textContent = AUDIO.isEnabled() ? 'Dźwięk: wł.' : 'Dźwięk: wył.';
     $('modeButtons').hidden = false;
     $('nameform').hidden = true;
+    $('netform').hidden = true;
+    $('netconn').hidden = true;
+    $('btnNet').hidden = !(typeof NET !== 'undefined' && NET.available());
+    if (o.names && !$('inpNetName').value) $('inpNetName').value = o.names[0] || '';
     if (o.names) {
       $('inpName1').value = o.names[0] || '';
       $('inpName2').value = o.names[1] || '';
@@ -442,6 +446,30 @@ var HUD = (function () {
     $('btnDuoBack').addEventListener('click', function () {
       $('nameform').hidden = true;
       $('modeButtons').hidden = false;
+    });
+    $('btnNet').addEventListener('click', function () {
+      AUDIO.ui();
+      $('modeButtons').hidden = true;
+      $('netform').hidden = false;
+    });
+    $('btnNetBack').addEventListener('click', function () {
+      $('netform').hidden = true;
+      $('modeButtons').hidden = false;
+    });
+    $('btnNetHost').addEventListener('click', function () { AUDIO.ui(); cb.onNetHost($('inpNetName').value.trim(), currentBias()); });
+    $('btnNetJoin').addEventListener('click', function () { AUDIO.ui(); cb.onNetJoin($('inpNetName').value.trim()); });
+    $('btnNetCancel').addEventListener('click', function () { AUDIO.ui(); cb.onNetCancel(); });
+    $('btnNetPaste').addEventListener('click', function () {
+      AUDIO.ui();
+      $('pasteWrap').hidden = !$('pasteWrap').hidden;
+    });
+    $('btnPasteGo').addEventListener('click', function () { AUDIO.ui(); NET.acceptPeerCode($('pasteIn').value); });
+    $('btnCopyCode').addEventListener('click', function () {
+      var el = $('myCode');
+      el.focus();
+      el.select();
+      try { navigator.clipboard.writeText(el.value); } catch (e) { try { document.execCommand('copy'); } catch (e2) {} }
+      AUDIO.ui();
     });
     var duoGo = function () {
       cb.onModeStart('duo', [$('inpName1').value.trim(), $('inpName2').value.trim()], currentBias());

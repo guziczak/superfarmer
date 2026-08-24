@@ -9,7 +9,12 @@ statycznego i na telefonie.
 
 ## Rozgrywka
 
-- **Solo z botem Zenkiem** albo **2 graczy na jednym telefonie** (z własnymi imionami).
+- **Solo z botem Zenkiem**, **2 graczy na jednym telefonie** (z własnymi imionami) albo
+  **2 graczy na dwóch telefonach** — bezpośrednie połączenie P2P (WebRTC, bez żadnego
+  serwera gry): parujecie się skanując nawzajem kody QR (albo kopiując kod ręcznie),
+  a rzuty są transmitowane na żywo klatka po klatce — fizyka liczy się na telefonie
+  rzucającego, przeciwnik ogląda wierną transmisję. Wymaga wspólnej sieci WiFi albo
+  hotspotu z telefonu; skanowanie kamerą wymaga HTTPS (np. GitHub Pages).
 - Zasady klasycznego wydania (Granna): rozmnażanie parami (stado + kostki), lis kradnie
   króliki, wilk pożera wszystko oprócz koni i małego psa, psy bronią, jedna wymiana ze
   Stadem Głównym na turę (w obie strony), limity Stada Głównego.
@@ -50,6 +55,7 @@ node dev/physrepro.mjs full # headless test fizyki (30 rzutów)
 node dev/settle-sim.mjs     # dowód: 30/30 rzutów kończy się płasko (arg: obciążenie, np. 0.25)
 node dev/lock-sim.mjs       # dowód: zastygnięta kostka jest nieruszalna pod ostrzałem
 node dev/bias-sim.mjs       # kalibracja obciążonych kostek (rozkład ścianek vs offset)
+node dev/qr-test.mjs        # dowód sygnalizacji: SDP → deflate → QR → skan → SDP bez straty
 node dev/check-parallel.mjs # dowód równoległości ścianek k12
 ```
 
