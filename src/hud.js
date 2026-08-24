@@ -26,7 +26,7 @@ var HUD = (function () {
       var chips = '';
       for (var a = 0; a < RULES.ANIMALS.length; a++) {
         var an = RULES.ANIMALS[a];
-        chips += '<div class="chip" data-a="' + an + '">' + img(an, 22) + '<div class="cnt">0</div></div>';
+        chips += '<div class="chip" data-a="' + an + '">' + img(an, 26) + '<div class="cnt">0</div></div>';
       }
       card.innerHTML =
         '<div class="prow"><div class="pdot"></div><div class="pname">' + p.name + '</div></div>' +
@@ -36,6 +36,9 @@ var HUD = (function () {
   }
 
   function refresh(S, fx) {
+    var tb = $('topbar');
+    tb.classList.toggle('lead0', S.cur === 0);
+    tb.classList.toggle('lead1', S.cur === 1);
     for (var i = 0; i < S.players.length; i++) {
       var p = S.players[i];
       var card = $('pcard' + i);

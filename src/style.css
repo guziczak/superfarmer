@@ -113,7 +113,11 @@ button {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   pointer-events: none;
+  transition: grid-template-columns 0.35s ease;
 }
+/* karta aktywnego gracza rośnie — większe ikony i liczniki tam, gdzie się patrzy */
+#topbar.lead0 { grid-template-columns: 1.3fr 1fr; }
+#topbar.lead1 { grid-template-columns: 1fr 1.3fr; }
 .pcard {
   background: var(--panel);
   -webkit-backdrop-filter: blur(14px);
@@ -158,7 +162,7 @@ button {
 
 .chips {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 3px;
 }
 .chip {
@@ -167,19 +171,20 @@ button {
   align-items: center;
   gap: 0;
   border-radius: 9px;
-  padding: 3px 0 2px;
+  padding: 3px 1px 2px;
   position: relative;
   background: rgba(255, 236, 200, 0.05);
 }
-.chip img { width: 22px; height: 22px; display: block; }
+.chip img { width: 100%; max-width: 26px; height: auto; display: block; }
 .chip .cnt {
-  font-size: 12px;
+  font-size: 13.5px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
   color: var(--cream);
 }
-.chip.zero { opacity: 0.33; }
+.chip.zero { opacity: 0.45; }
+.pcard.active .cnt { font-size: 15px; }
 .chip.zero .cnt { color: var(--cream-faint); }
 .chip.req::after {
   content: '';
@@ -281,7 +286,7 @@ button {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 8px 14px 8px 9px;
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--cream-dim);
   box-shadow: var(--shadow);
   white-space: nowrap;
@@ -291,12 +296,18 @@ button {
 #feed span { overflow: hidden; text-overflow: ellipsis; }
 #feed:empty { display: none; }
 #hintline {
-  font-size: 12.5px;
-  color: var(--cream-faint);
-  padding-left: 6px;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
-  min-height: 16px;
+  font-size: 13.5px;
+  color: var(--cream-dim);
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 7px 13px;
+  box-shadow: var(--shadow);
+  max-width: 100%;
 }
+#hintline:empty { display: none; }
 #actions { display: flex; gap: 9px; align-items: center; flex: none; }
 
 #btnMenu {
@@ -385,8 +396,8 @@ button {
   letter-spacing: 0.03em;
 }
 .sheet .sub {
-  font-size: 12.5px;
-  color: var(--cream-faint);
+  font-size: 13.5px;
+  color: var(--cream-dim);
   margin: 2px 18px 10px;
 }
 .sheet .scroll {
@@ -404,23 +415,23 @@ button {
   background: rgba(255, 236, 200, 0.05);
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 9px 12px;
+  padding: 10px 12px;
   margin-bottom: 8px;
-  font-size: 14.5px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--cream);
   text-align: left;
 }
 .exrow:disabled { opacity: 0.38; }
 .exrow .side { display: flex; align-items: center; gap: 3px; }
-.exrow img { width: 26px; height: 26px; }
+.exrow img { width: 28px; height: 28px; }
 .exrow .n { font-variant-numeric: tabular-nums; }
 .exrow .arr { color: var(--amber); font-size: 17px; margin: 0 2px; }
 .exrow .bank {
   margin-left: auto;
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 400;
-  color: var(--cream-faint);
+  color: var(--cream-dim);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -449,7 +460,7 @@ button {
 .exstep .go { flex: 1; max-width: 150px; padding: 11px 10px; font-size: 15px; }
 
 .exsec {
-  font-size: 11.5px;
+  font-size: 12.5px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--cream-faint);
@@ -672,8 +683,8 @@ button {
 
 /* wąskie ekrany */
 @media (max-width: 380px) {
-  .chip img { width: 20px; height: 20px; }
-  .chip .cnt { font-size: 11px; }
+  .chip .cnt { font-size: 12px; }
+  .pcard.active .cnt { font-size: 13.5px; }
   .pcard { padding: 6px 7px 7px; }
   .btn { padding: 12px 16px; font-size: 15px; }
 }

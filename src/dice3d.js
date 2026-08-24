@@ -426,7 +426,7 @@ var DiceScene = (function () {
       body.sleepTimeLimit = 0.4;
       body.userData = { kind: 'die', index: d };
       world.addBody(body);
-      this.dice.push({ mesh: mesh, body: body, symbols: defs[d].symbols });
+      this.dice.push({ mesh: mesh, body: body, symbols: defs[d].symbols, thrown: false, locked: false });
       this._bindImpact(body);
     }
     this._layoutTray();
@@ -570,6 +570,7 @@ var DiceScene = (function () {
       var b = this.dice[i].body;
       b.position.x = Math.min(Math.max(b.position.x, r.x0 + U), r.x1 - U);
       b.position.z = Math.min(Math.max(b.position.z, r.z0 + U), r.z1 - U);
+      b.aabbNeedsUpdate = true;
     }
   };
 
@@ -577,6 +578,7 @@ var DiceScene = (function () {
   P._restDice = function (initial) {
     var r = this.rect, U = this.U;
     for (var i = 0; i < 2; i++) {
+      this._unlockDie(i);
       var b = this.dice[i].body;
       var f = Math.floor(Math.random() * 12);
       var n = this.dod.normals[f];
@@ -589,6 +591,46 @@ var DiceScene = (function () {
       b.velocity.setZero();
       b.angularVelocity.setZero();
       b.sleep();
+    }
+  };
+
+  /* ---------- blokada ustabilizowanej kostki („ze stali”) ----------
+     Kostka wyrzucona z palca, która znieruchomiała płasko na filcu, staje się
+     ciałem statycznym do końca rzutu: nie da się jej ponownie złapać ani
+     potrącić drugą kostką. Przekrzywiona NIE zastyga — czeka ją uczciwy przerzut. */
+  P._lockDie = function (i) {
+    var d = this.dice[i];
+    if (d.locked) return;
+    var b = d.body;
+    b.velocity.setZero();
+    b.angularVelocity.setZero();
+    b.type = CANNON.Body.STATIC;
+    b.mass = 0;
+    b.updateMassProperties();
+    d.locked = true;
+  };
+
+  P._unlockDie = function (i) {
+    var d = this.dice[i];
+    d.thrown = false;
+    if (!d.locked) return;
+    var b = d.body;
+    b.type = CANNON.Body.DYNAMIC;
+    b.mass = 1.2;
+    b.updateMassProperties();
+    d.locked = false;
+  };
+
+  P._lockSettledDice = function () {
+    if (this.state !== 'flying' && this.state !== 'held') return;
+    for (var i = 0; i < 2; i++) {
+      var d = this.dice[i];
+      if (!d.thrown || d.locked) continue;
+      var b = d.body;
+      if (b.sleepState !== CANNON.Body.SLEEPING) continue;
+      if (b.position.y > this.U * 1.35) continue;   // leży na filcu, nie na drugiej kostce
+      if (this._faceUp(d).dot < 0.99999) continue;  // przekrzywiona zostaje żywa
+      this._lockDie(i);
     }
   };
 
@@ -647,7 +689,7 @@ var DiceScene = (function () {
       if (Object.keys(self._holds).length === 0) {
         assign = [0, 1]; // pierwszy palec bierze obie
       } else {
-        var free = [0, 1].filter(function (i) { return !(i in held); });
+        var free = [0, 1].filter(function (i) { return !(i in held) && !self.dice[i].thrown; });
         if (free.length > 0) {
           assign = [nearestDie(w, free)];
         } else {
@@ -719,6 +761,7 @@ var DiceScene = (function () {
       v.add(new THREE.Vector3(Math.cos(a) * U * 7, 0, Math.sin(a) * U * 7));
     }
     for (var k = 0; k < hold.dice.length; k++) {
+      this.dice[hold.dice[k]].thrown = true;
       var b = this.dice[hold.dice[k]].body;
       b.wakeUp();
       b.velocity.set(v.x * 1.05, U * (4.5 + Math.random() * 2.5) + speed * 0.10, v.z * 1.05);
@@ -734,6 +777,8 @@ var DiceScene = (function () {
   P.throwAuto = function () {
     var U = this.U, r = this.rect;
     for (var i = 0; i < 2; i++) {
+      this._unlockDie(i);
+      this.dice[i].thrown = true;
       var b = this.dice[i].body;
       b.wakeUp();
       b.position.y = Math.max(b.position.y, U * 2.2);
@@ -783,9 +828,12 @@ var DiceScene = (function () {
     }
     if (guard >= 10) this._acc = 0;
 
+    this._lockSettledDice();
+
     // watchdog: kostka poza tacą lub pod stołem → ratunkowy powrót
     var r = this.rect, U = this.U;
     for (var w = 0; w < 2; w++) {
+      if (this.dice[w].locked) continue;
       var wb = this.dice[w].body;
       if (wb.position.y < -U * 2 || wb.position.y > U * 30 ||
           wb.position.x < r.x0 - U * 4 || wb.position.x > r.x1 + U * 4 ||
@@ -881,21 +929,46 @@ var DiceScene = (function () {
     for (var j = 0; j < 2; j++) {
       var r = this._faceUp(this.dice[j]);
       results.push(r);
-      if (r.dot < 0.99996) leaning = true;
+      if (r.dot < 0.99999) leaning = true;
     }
     if (leaning && this._cockedTries < 5 && !overtime) {
       this._cockedTries++;
       this._settleTimer = 0;
+      this._flightTime = 0; // bezpiecznik liczy czas od OSTATNIEGO przerzutu; całość ogranicza licznik prób
       for (var m = 0; m < 2; m++) {
         var bb = this.dice[m].body;
-        if (results[m].dot < 0.99996) {
+        if (results[m].dot < 0.99999) {
           bb.wakeUp();
-          var cdx = this.rect.cx - bb.position.x, cdz = this.rect.cz - bb.position.z;
-          var cl = Math.hypot(cdx, cdz) || 1;
+          // przerzut w najbardziej wolne miejsce: kandydaci = ku środkowi, od drugiej
+          // kostki i po stycznych; wygrywa kierunek z największym prześwitem od
+          // przeszkód (druga kostka — może być zastygnięta „ze stali” — oraz ściany)
+          var ob = this.dice[1 - m].body;
+          var r0 = this.rect;
+          var px = bb.position.x, pz = bb.position.z;
+          var cands = [];
+          var cdx = r0.cx - px, cdz = r0.cz - pz;
+          var cl = Math.hypot(cdx, cdz);
+          if (cl > 1e-6) cands.push([cdx / cl, cdz / cl]);
+          var ax = px - ob.position.x, az = pz - ob.position.z;
+          var ad = Math.hypot(ax, az);
+          if (ad > 1e-6) {
+            cands.push([ax / ad, az / ad]);
+            cands.push([-az / ad, ax / ad]);
+            cands.push([az / ad, -ax / ad]);
+          }
+          if (!cands.length) cands.push([1, 0]);
+          var dirx = cands[0][0], dirz = cands[0][1], bestScore = -1e9;
+          for (var ci = 0; ci < cands.length; ci++) {
+            var tx = px + cands[ci][0] * U * 2, tz = pz + cands[ci][1] * U * 2;
+            var dOther = Math.hypot(tx - ob.position.x, tz - ob.position.z);
+            var dWall = Math.min(tx - r0.x0, r0.x1 - tx, tz - r0.z0, r0.z1 - tz);
+            var score = Math.min(dOther, dWall);
+            if (score > bestScore) { bestScore = score; dirx = cands[ci][0]; dirz = cands[ci][1]; }
+          }
           bb.position.y += U * 0.5;
-          bb.position.x += cdx * 0.18;
-          bb.position.z += cdz * 0.18;
-          bb.velocity.set(cdx / cl * U * 2.4, U * 2.2, cdz / cl * U * 2.4);
+          bb.position.x = Math.min(Math.max(px + dirx * U * 0.6, r0.x0 + U), r0.x1 - U);
+          bb.position.z = Math.min(Math.max(pz + dirz * U * 0.6, r0.z0 + U), r0.z1 - U);
+          bb.velocity.set(dirx * U * 2.4, U * 2.2, dirz * U * 2.4);
           bb.angularVelocity.set((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 2.5, (Math.random() - 0.5) * 5);
         }
       }
@@ -905,6 +978,7 @@ var DiceScene = (function () {
     // Bryła jest poprawnym dwunastościanem foremnym (każda para ścianek
     // równoległa), więc spoczynek na płask daje górną ściankę poziomą sam z siebie.
     this.state = 'idle';
+    for (var un = 0; un < 2; un++) this._unlockDie(un);
     this.onSettle([results[0].symbol, results[1].symbol]);
   };
 

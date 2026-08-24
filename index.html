@@ -126,7 +126,11 @@ button {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   pointer-events: none;
+  transition: grid-template-columns 0.35s ease;
 }
+/* karta aktywnego gracza rośnie — większe ikony i liczniki tam, gdzie się patrzy */
+#topbar.lead0 { grid-template-columns: 1.3fr 1fr; }
+#topbar.lead1 { grid-template-columns: 1fr 1.3fr; }
 .pcard {
   background: var(--panel);
   -webkit-backdrop-filter: blur(14px);
@@ -171,7 +175,7 @@ button {
 
 .chips {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 3px;
 }
 .chip {
@@ -180,19 +184,20 @@ button {
   align-items: center;
   gap: 0;
   border-radius: 9px;
-  padding: 3px 0 2px;
+  padding: 3px 1px 2px;
   position: relative;
   background: rgba(255, 236, 200, 0.05);
 }
-.chip img { width: 22px; height: 22px; display: block; }
+.chip img { width: 100%; max-width: 26px; height: auto; display: block; }
 .chip .cnt {
-  font-size: 12px;
+  font-size: 13.5px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
   color: var(--cream);
 }
-.chip.zero { opacity: 0.33; }
+.chip.zero { opacity: 0.45; }
+.pcard.active .cnt { font-size: 15px; }
 .chip.zero .cnt { color: var(--cream-faint); }
 .chip.req::after {
   content: '';
@@ -294,7 +299,7 @@ button {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 8px 14px 8px 9px;
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--cream-dim);
   box-shadow: var(--shadow);
   white-space: nowrap;
@@ -304,12 +309,18 @@ button {
 #feed span { overflow: hidden; text-overflow: ellipsis; }
 #feed:empty { display: none; }
 #hintline {
-  font-size: 12.5px;
-  color: var(--cream-faint);
-  padding-left: 6px;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
-  min-height: 16px;
+  font-size: 13.5px;
+  color: var(--cream-dim);
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 7px 13px;
+  box-shadow: var(--shadow);
+  max-width: 100%;
 }
+#hintline:empty { display: none; }
 #actions { display: flex; gap: 9px; align-items: center; flex: none; }
 
 #btnMenu {
@@ -398,8 +409,8 @@ button {
   letter-spacing: 0.03em;
 }
 .sheet .sub {
-  font-size: 12.5px;
-  color: var(--cream-faint);
+  font-size: 13.5px;
+  color: var(--cream-dim);
   margin: 2px 18px 10px;
 }
 .sheet .scroll {
@@ -417,23 +428,23 @@ button {
   background: rgba(255, 236, 200, 0.05);
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 9px 12px;
+  padding: 10px 12px;
   margin-bottom: 8px;
-  font-size: 14.5px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--cream);
   text-align: left;
 }
 .exrow:disabled { opacity: 0.38; }
 .exrow .side { display: flex; align-items: center; gap: 3px; }
-.exrow img { width: 26px; height: 26px; }
+.exrow img { width: 28px; height: 28px; }
 .exrow .n { font-variant-numeric: tabular-nums; }
 .exrow .arr { color: var(--amber); font-size: 17px; margin: 0 2px; }
 .exrow .bank {
   margin-left: auto;
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 400;
-  color: var(--cream-faint);
+  color: var(--cream-dim);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -462,7 +473,7 @@ button {
 .exstep .go { flex: 1; max-width: 150px; padding: 11px 10px; font-size: 15px; }
 
 .exsec {
-  font-size: 11.5px;
+  font-size: 12.5px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--cream-faint);
@@ -685,8 +696,8 @@ button {
 
 /* wąskie ekrany */
 @media (max-width: 380px) {
-  .chip img { width: 20px; height: 20px; }
-  .chip .cnt { font-size: 11px; }
+  .chip .cnt { font-size: 12px; }
+  .pcard.active .cnt { font-size: 13.5px; }
   .pcard { padding: 6px 7px 7px; }
   .btn { padding: 12px 16px; font-size: 15px; }
 }
@@ -15065,7 +15076,7 @@ var DiceScene = (function () {
       body.sleepTimeLimit = 0.4;
       body.userData = { kind: 'die', index: d };
       world.addBody(body);
-      this.dice.push({ mesh: mesh, body: body, symbols: defs[d].symbols });
+      this.dice.push({ mesh: mesh, body: body, symbols: defs[d].symbols, thrown: false, locked: false });
       this._bindImpact(body);
     }
     this._layoutTray();
@@ -15209,6 +15220,7 @@ var DiceScene = (function () {
       var b = this.dice[i].body;
       b.position.x = Math.min(Math.max(b.position.x, r.x0 + U), r.x1 - U);
       b.position.z = Math.min(Math.max(b.position.z, r.z0 + U), r.z1 - U);
+      b.aabbNeedsUpdate = true;
     }
   };
 
@@ -15216,6 +15228,7 @@ var DiceScene = (function () {
   P._restDice = function (initial) {
     var r = this.rect, U = this.U;
     for (var i = 0; i < 2; i++) {
+      this._unlockDie(i);
       var b = this.dice[i].body;
       var f = Math.floor(Math.random() * 12);
       var n = this.dod.normals[f];
@@ -15228,6 +15241,46 @@ var DiceScene = (function () {
       b.velocity.setZero();
       b.angularVelocity.setZero();
       b.sleep();
+    }
+  };
+
+  /* ---------- blokada ustabilizowanej kostki („ze stali”) ----------
+     Kostka wyrzucona z palca, która znieruchomiała płasko na filcu, staje się
+     ciałem statycznym do końca rzutu: nie da się jej ponownie złapać ani
+     potrącić drugą kostką. Przekrzywiona NIE zastyga — czeka ją uczciwy przerzut. */
+  P._lockDie = function (i) {
+    var d = this.dice[i];
+    if (d.locked) return;
+    var b = d.body;
+    b.velocity.setZero();
+    b.angularVelocity.setZero();
+    b.type = CANNON.Body.STATIC;
+    b.mass = 0;
+    b.updateMassProperties();
+    d.locked = true;
+  };
+
+  P._unlockDie = function (i) {
+    var d = this.dice[i];
+    d.thrown = false;
+    if (!d.locked) return;
+    var b = d.body;
+    b.type = CANNON.Body.DYNAMIC;
+    b.mass = 1.2;
+    b.updateMassProperties();
+    d.locked = false;
+  };
+
+  P._lockSettledDice = function () {
+    if (this.state !== 'flying' && this.state !== 'held') return;
+    for (var i = 0; i < 2; i++) {
+      var d = this.dice[i];
+      if (!d.thrown || d.locked) continue;
+      var b = d.body;
+      if (b.sleepState !== CANNON.Body.SLEEPING) continue;
+      if (b.position.y > this.U * 1.35) continue;   // leży na filcu, nie na drugiej kostce
+      if (this._faceUp(d).dot < 0.99999) continue;  // przekrzywiona zostaje żywa
+      this._lockDie(i);
     }
   };
 
@@ -15286,7 +15339,7 @@ var DiceScene = (function () {
       if (Object.keys(self._holds).length === 0) {
         assign = [0, 1]; // pierwszy palec bierze obie
       } else {
-        var free = [0, 1].filter(function (i) { return !(i in held); });
+        var free = [0, 1].filter(function (i) { return !(i in held) && !self.dice[i].thrown; });
         if (free.length > 0) {
           assign = [nearestDie(w, free)];
         } else {
@@ -15358,6 +15411,7 @@ var DiceScene = (function () {
       v.add(new THREE.Vector3(Math.cos(a) * U * 7, 0, Math.sin(a) * U * 7));
     }
     for (var k = 0; k < hold.dice.length; k++) {
+      this.dice[hold.dice[k]].thrown = true;
       var b = this.dice[hold.dice[k]].body;
       b.wakeUp();
       b.velocity.set(v.x * 1.05, U * (4.5 + Math.random() * 2.5) + speed * 0.10, v.z * 1.05);
@@ -15373,6 +15427,8 @@ var DiceScene = (function () {
   P.throwAuto = function () {
     var U = this.U, r = this.rect;
     for (var i = 0; i < 2; i++) {
+      this._unlockDie(i);
+      this.dice[i].thrown = true;
       var b = this.dice[i].body;
       b.wakeUp();
       b.position.y = Math.max(b.position.y, U * 2.2);
@@ -15422,9 +15478,12 @@ var DiceScene = (function () {
     }
     if (guard >= 10) this._acc = 0;
 
+    this._lockSettledDice();
+
     // watchdog: kostka poza tacą lub pod stołem → ratunkowy powrót
     var r = this.rect, U = this.U;
     for (var w = 0; w < 2; w++) {
+      if (this.dice[w].locked) continue;
       var wb = this.dice[w].body;
       if (wb.position.y < -U * 2 || wb.position.y > U * 30 ||
           wb.position.x < r.x0 - U * 4 || wb.position.x > r.x1 + U * 4 ||
@@ -15520,21 +15579,46 @@ var DiceScene = (function () {
     for (var j = 0; j < 2; j++) {
       var r = this._faceUp(this.dice[j]);
       results.push(r);
-      if (r.dot < 0.99996) leaning = true;
+      if (r.dot < 0.99999) leaning = true;
     }
     if (leaning && this._cockedTries < 5 && !overtime) {
       this._cockedTries++;
       this._settleTimer = 0;
+      this._flightTime = 0; // bezpiecznik liczy czas od OSTATNIEGO przerzutu; całość ogranicza licznik prób
       for (var m = 0; m < 2; m++) {
         var bb = this.dice[m].body;
-        if (results[m].dot < 0.99996) {
+        if (results[m].dot < 0.99999) {
           bb.wakeUp();
-          var cdx = this.rect.cx - bb.position.x, cdz = this.rect.cz - bb.position.z;
-          var cl = Math.hypot(cdx, cdz) || 1;
+          // przerzut w najbardziej wolne miejsce: kandydaci = ku środkowi, od drugiej
+          // kostki i po stycznych; wygrywa kierunek z największym prześwitem od
+          // przeszkód (druga kostka — może być zastygnięta „ze stali” — oraz ściany)
+          var ob = this.dice[1 - m].body;
+          var r0 = this.rect;
+          var px = bb.position.x, pz = bb.position.z;
+          var cands = [];
+          var cdx = r0.cx - px, cdz = r0.cz - pz;
+          var cl = Math.hypot(cdx, cdz);
+          if (cl > 1e-6) cands.push([cdx / cl, cdz / cl]);
+          var ax = px - ob.position.x, az = pz - ob.position.z;
+          var ad = Math.hypot(ax, az);
+          if (ad > 1e-6) {
+            cands.push([ax / ad, az / ad]);
+            cands.push([-az / ad, ax / ad]);
+            cands.push([az / ad, -ax / ad]);
+          }
+          if (!cands.length) cands.push([1, 0]);
+          var dirx = cands[0][0], dirz = cands[0][1], bestScore = -1e9;
+          for (var ci = 0; ci < cands.length; ci++) {
+            var tx = px + cands[ci][0] * U * 2, tz = pz + cands[ci][1] * U * 2;
+            var dOther = Math.hypot(tx - ob.position.x, tz - ob.position.z);
+            var dWall = Math.min(tx - r0.x0, r0.x1 - tx, tz - r0.z0, r0.z1 - tz);
+            var score = Math.min(dOther, dWall);
+            if (score > bestScore) { bestScore = score; dirx = cands[ci][0]; dirz = cands[ci][1]; }
+          }
           bb.position.y += U * 0.5;
-          bb.position.x += cdx * 0.18;
-          bb.position.z += cdz * 0.18;
-          bb.velocity.set(cdx / cl * U * 2.4, U * 2.2, cdz / cl * U * 2.4);
+          bb.position.x = Math.min(Math.max(px + dirx * U * 0.6, r0.x0 + U), r0.x1 - U);
+          bb.position.z = Math.min(Math.max(pz + dirz * U * 0.6, r0.z0 + U), r0.z1 - U);
+          bb.velocity.set(dirx * U * 2.4, U * 2.2, dirz * U * 2.4);
           bb.angularVelocity.set((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 2.5, (Math.random() - 0.5) * 5);
         }
       }
@@ -15544,6 +15628,7 @@ var DiceScene = (function () {
     // Bryła jest poprawnym dwunastościanem foremnym (każda para ścianek
     // równoległa), więc spoczynek na płask daje górną ściankę poziomą sam z siebie.
     this.state = 'idle';
+    for (var un = 0; un < 2; un++) this._unlockDie(un);
     this.onSettle([results[0].symbol, results[1].symbol]);
   };
 
@@ -15610,7 +15695,7 @@ var HUD = (function () {
       var chips = '';
       for (var a = 0; a < RULES.ANIMALS.length; a++) {
         var an = RULES.ANIMALS[a];
-        chips += '<div class="chip" data-a="' + an + '">' + img(an, 22) + '<div class="cnt">0</div></div>';
+        chips += '<div class="chip" data-a="' + an + '">' + img(an, 26) + '<div class="cnt">0</div></div>';
       }
       card.innerHTML =
         '<div class="prow"><div class="pdot"></div><div class="pname">' + p.name + '</div></div>' +
@@ -15620,6 +15705,9 @@ var HUD = (function () {
   }
 
   function refresh(S, fx) {
+    var tb = $('topbar');
+    tb.classList.toggle('lead0', S.cur === 0);
+    tb.classList.toggle('lead1', S.cur === 1);
     for (var i = 0; i < S.players.length; i++) {
       var p = S.players[i];
       var card = $('pcard' + i);

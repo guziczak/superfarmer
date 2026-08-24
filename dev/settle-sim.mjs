@@ -127,9 +127,9 @@ const throwDice = () => {
 let allOk = true;
 for (let t = 0; t < 30; t++) {
   throwDice();
-  let flight = 0, settleT = 0, tries = 0, resolved = false, rerolls = 0;
+  let flight = 0, att = 0, settleT = 0, tries = 0, resolved = false, rerolls = 0;
   const step = 1 / 120;
-  while (flight < 25 && !resolved) {
+  while (flight < 45 && !resolved) {
     // tłumik dogasania
     for (const b of dice) {
       if (b.sleepState !== CANNON.Body.SLEEPING && b.velocity.length() < U * 2.4) {
@@ -139,7 +139,8 @@ for (let t = 0; t < 30; t++) {
     }
     world.step(step);
     flight += step;
-    const overtime = flight > 6.5;
+    att += step;
+    const overtime = att > 6.5; // jak w grze: czas od ostatniego przerzutu
     let calm = true;
     for (const b of dice) {
       if (b.sleepState !== CANNON.Body.SLEEPING) {
@@ -151,20 +152,42 @@ for (let t = 0; t < 30; t++) {
     if (settleT < 0.4 && !overtime) continue;
     let leaning = false;
     const dots = dice.map(topDot);
-    for (const dd of dots) if (dd < 0.99996) leaning = true;
+    for (const dd of dots) if (dd < 0.99999) leaning = true;
     if (leaning && tries < 5 && !overtime) {
       tries++; rerolls++;
       settleT = 0;
+      att = 0;
       for (let m = 0; m < 2; m++) {
         const bb = dice[m];
-        if (dots[m] < 0.99996) {
+        if (dots[m] < 0.99999) {
           bb.wakeUp();
-          const cdx = rect.cx - bb.position.x, cdz = rect.cz - bb.position.z;
-          const cl = Math.hypot(cdx, cdz) || 1;
+          // lustro dice3d._checkSettle: przerzut w najbardziej wolny kierunek
+          const ob = dice[1 - m];
+          const px = bb.position.x, pz = bb.position.z;
+          const cands = [];
+          const cdx = rect.cx - px, cdz = rect.cz - pz;
+          const cl = Math.hypot(cdx, cdz);
+          if (cl > 1e-6) cands.push([cdx / cl, cdz / cl]);
+          const ax = px - ob.position.x, az = pz - ob.position.z;
+          const ad = Math.hypot(ax, az);
+          if (ad > 1e-6) {
+            cands.push([ax / ad, az / ad]);
+            cands.push([-az / ad, ax / ad]);
+            cands.push([az / ad, -ax / ad]);
+          }
+          if (!cands.length) cands.push([1, 0]);
+          let dirx = cands[0][0], dirz = cands[0][1], bestScore = -1e9;
+          for (const c of cands) {
+            const tx = px + c[0] * U * 2, tz = pz + c[1] * U * 2;
+            const dOther = Math.hypot(tx - ob.position.x, tz - ob.position.z);
+            const dWall = Math.min(tx - rect.x0, rect.x1 - tx, tz - rect.z0, rect.z1 - tz);
+            const score = Math.min(dOther, dWall);
+            if (score > bestScore) { bestScore = score; dirx = c[0]; dirz = c[1]; }
+          }
           bb.position.y += U * 0.5;
-          bb.position.x += cdx * 0.18;
-          bb.position.z += cdz * 0.18;
-          bb.velocity.set(cdx / cl * U * 2.4, U * 2.2, cdz / cl * U * 2.4);
+          bb.position.x = Math.min(Math.max(px + dirx * U * 0.6, rect.x0 + U), rect.x1 - U);
+          bb.position.z = Math.min(Math.max(pz + dirz * U * 0.6, rect.z0 + U), rect.z1 - U);
+          bb.velocity.set(dirx * U * 2.4, U * 2.2, dirz * U * 2.4);
           bb.angularVelocity.set((rng() - 0.5) * 5, (rng() - 0.5) * 2.5, (rng() - 0.5) * 5);
         }
       }
@@ -177,7 +200,7 @@ for (let t = 0; t < 30; t++) {
     if (!ok) allOk = false;
     console.log(`rzut ${t}: rozstrzygnięty po ${flight.toFixed(2)}s, przerzuty=${rerolls}, kąty=[${angs.map(a => a.toFixed(3)).join('°, ')}°] ${ok ? 'OK' : 'ZA KRZYWO!'}`);
   }
-  if (!resolved) { console.log(`rzut ${t}: NIE ROZSTRZYGNIĘTY w 25s!`); allOk = false; }
+  if (!resolved) { console.log(`rzut ${t}: NIE ROZSTRZYGNIĘTY w 45s!`); allOk = false; }
 }
 console.log(allOk ? '\nWSZYSTKIE 30 rzutów: rozstrzygnięte, płasko.' : '\nSĄ PROBLEMY');
 process.exit(allOk ? 0 : 1);

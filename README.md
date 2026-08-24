@@ -30,6 +30,9 @@ statycznego i na telefonie.
   w shaderze z proceduralnego atlasu (canvas 2D, zero plików graficznych).
 - **Fizyka**: cannon-es, krok 1/120 s; ścianki tacy, wykrywanie spoczynku, przerzut kostki
   opartej o przeszkodę. Po rzucie kostka **leży tak, jak upadła** — bez żadnych korekt.
+  Kostka, która po wyrzucie znieruchomieje płasko, **zastyga do końca rzutu** (ciało
+  statyczne): nie da się jej ponownie złapać ani potrącić drugą kostką
+  (dowód: `node dev/lock-sim.mjs`).
 - **Dźwięk**: syntezowany WebAudio (stuki zależne od siły uderzenia, fanfary, szczekanie).
 - Grafika zwierząt wspólna dla kostek, HUD-u i konfetti.
 
@@ -40,6 +43,8 @@ node dev/serve.mjs          # serwer deweloperski na :8123 (także dla telefonu 
 node build.mjs              # składa index.html oraz dist/superfarmer.artifact.html
 node dev/test-rules.js      # testy logiki zasad (31 asercji)
 node dev/physrepro.mjs full # headless test fizyki (30 rzutów)
+node dev/settle-sim.mjs     # dowód: 30/30 rzutów kończy się płasko (z przerzutami)
+node dev/lock-sim.mjs       # dowód: zastygnięta kostka jest nieruszalna pod ostrzałem
 node dev/check-parallel.mjs # dowód równoległości ścianek k12
 ```
 
