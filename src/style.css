@@ -544,6 +544,37 @@ button {
 }
 .nameinput::placeholder { color: var(--cream-faint); font-weight: 400; }
 .nameinput:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
+/* gra przez sieć: wskaźnik połączenia */
+#netdot {
+  position: fixed;
+  top: calc(var(--sat) + 10px);
+  right: calc(var(--sar) + 10px);
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--green);
+  background: rgba(20, 13, 7, 0.85);
+  border: 1px solid rgba(143, 202, 125, 0.4);
+  border-radius: 999px;
+  padding: 4px 9px 4px 6px;
+  pointer-events: none;
+}
+#netdot .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: netpulse 2.2s ease-in-out infinite;
+}
+#netdot.bad { color: #f2968c; border-color: rgba(214, 72, 60, 0.55); }
+#netdot.bad .dot { background: var(--red); box-shadow: 0 0 8px var(--red); animation-duration: 0.8s; }
+@keyframes netpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
 /* gra przez sieć */
 .netconn { gap: 10px; }
 .netstatus { font-size: 14px; color: var(--cream-dim); line-height: 1.45; min-height: 20px; text-align: center; }

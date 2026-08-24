@@ -9,7 +9,7 @@ var NET = (function () {
   'use strict';
 
   var CFG = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] };
-  var pc = null, dc = null, ui = null, cb = {}, closed = true, openTimer = 0;
+  var pc = null, dc = null, ui = null, cb = {}, closed = true, openTimer = 0, graceTimer = 0;
   var scan = null;
 
   function available() {
@@ -180,7 +180,21 @@ var NET = (function () {
   function watchConnection() {
     pc.onconnectionstatechange = function () {
       if (!pc) return;
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') fail();
+      var st = pc.connectionState;
+      if (st === 'connected') {
+        clearTimeout(graceTimer);
+        graceTimer = 0;
+        if (cb.onLink) cb.onLink(true);
+      } else if (st === 'disconnected') {
+        // chwilowy zanik (np. mrugnięcie WiFi) często sam wraca — dajemy 10 s łaski
+        if (cb.onLink) cb.onLink(false);
+        clearTimeout(graceTimer);
+        graceTimer = setTimeout(function () {
+          if (pc && pc.connectionState !== 'connected') fail();
+        }, 10000);
+      } else if (st === 'failed' || st === 'closed') {
+        fail();
+      }
     };
   }
 
@@ -189,6 +203,7 @@ var NET = (function () {
     closed = true;
     stopScan();
     clearTimeout(openTimer);
+    clearTimeout(graceTimer);
     if (cb.onClose) cb.onClose();
   }
 
@@ -274,6 +289,7 @@ var NET = (function () {
     closed = true;
     stopScan();
     clearTimeout(openTimer);
+    clearTimeout(graceTimer);
     try { if (dc) { dc.onclose = null; dc.close(); } } catch (e) {}
     try { if (pc) { pc.onconnectionstatechange = null; pc.close(); } } catch (e) {}
     dc = null; pc = null; ui = null; cb = {};

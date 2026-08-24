@@ -549,6 +549,37 @@ button {
 }
 .nameinput::placeholder { color: var(--cream-faint); font-weight: 400; }
 .nameinput:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
+/* gra przez sieć: wskaźnik połączenia */
+#netdot {
+  position: fixed;
+  top: calc(var(--sat) + 10px);
+  right: calc(var(--sar) + 10px);
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--green);
+  background: rgba(20, 13, 7, 0.85);
+  border: 1px solid rgba(143, 202, 125, 0.4);
+  border-radius: 999px;
+  padding: 4px 9px 4px 6px;
+  pointer-events: none;
+}
+#netdot .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: netpulse 2.2s ease-in-out infinite;
+}
+#netdot.bad { color: #f2968c; border-color: rgba(214, 72, 60, 0.55); }
+#netdot.bad .dot { background: var(--red); box-shadow: 0 0 8px var(--red); animation-duration: 0.8s; }
+@keyframes netpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
 /* gra przez sieć */
 .netconn { gap: 10px; }
 .netstatus { font-size: 14px; color: var(--cream-dim); line-height: 1.45; min-height: 20px; text-align: center; }
@@ -770,6 +801,7 @@ button {
 
 <div id="hud">
   <header id="topbar"></header>
+  <div id="netdot" hidden><span class="dot"></span><span id="netdotTxt">online</span></div>
   <div id="banner" class="display"></div>
   <div id="dl0" class="dielabel"></div>
   <div id="dl1" class="dielabel"></div>
@@ -27146,7 +27178,7 @@ var NET = (function () {
   'use strict';
 
   var CFG = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] };
-  var pc = null, dc = null, ui = null, cb = {}, closed = true, openTimer = 0;
+  var pc = null, dc = null, ui = null, cb = {}, closed = true, openTimer = 0, graceTimer = 0;
   var scan = null;
 
   function available() {
@@ -27317,7 +27349,21 @@ var NET = (function () {
   function watchConnection() {
     pc.onconnectionstatechange = function () {
       if (!pc) return;
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') fail();
+      var st = pc.connectionState;
+      if (st === 'connected') {
+        clearTimeout(graceTimer);
+        graceTimer = 0;
+        if (cb.onLink) cb.onLink(true);
+      } else if (st === 'disconnected') {
+        // chwilowy zanik (np. mrugnięcie WiFi) często sam wraca — dajemy 10 s łaski
+        if (cb.onLink) cb.onLink(false);
+        clearTimeout(graceTimer);
+        graceTimer = setTimeout(function () {
+          if (pc && pc.connectionState !== 'connected') fail();
+        }, 10000);
+      } else if (st === 'failed' || st === 'closed') {
+        fail();
+      }
     };
   }
 
@@ -27326,6 +27372,7 @@ var NET = (function () {
     closed = true;
     stopScan();
     clearTimeout(openTimer);
+    clearTimeout(graceTimer);
     if (cb.onClose) cb.onClose();
   }
 
@@ -27411,6 +27458,7 @@ var NET = (function () {
     closed = true;
     stopScan();
     clearTimeout(openTimer);
+    clearTimeout(graceTimer);
     try { if (dc) { dc.onclose = null; dc.close(); } } catch (e) {}
     try { if (pc) { pc.onconnectionstatechange = null; pc.close(); } } catch (e) {}
     dc = null; pc = null; ui = null; cb = {};
@@ -29115,6 +29163,15 @@ var HUD = (function () {
     $('swipehint').classList.toggle('show', !!on);
   }
 
+  /** Kropka „online” (gra przez sieć): 'on' = zielona, 'off' = czerwona „łączę…”, null = schowana. */
+  function netDot(state) {
+    var el = $('netdot');
+    if (!state) { el.hidden = true; return; }
+    el.hidden = false;
+    el.classList.toggle('bad', state === 'off');
+    $('netdotTxt').textContent = state === 'off' ? 'łączę…' : 'online';
+  }
+
   function measureInsets() {
     var top = $('topbar').getBoundingClientRect();
     var dock = $('dock').getBoundingClientRect();
@@ -29143,6 +29200,7 @@ var HUD = (function () {
     hideWin: hideWin,
     confetti: confetti,
     swipeHint: swipeHint,
+    netDot: netDot,
     measureInsets: measureInsets
   };
 })();
@@ -29352,6 +29410,7 @@ var HUD = (function () {
     netQ = [];
     stopNetStream();
     startGame('net', names, bias);
+    HUD.netDot('on');
   }
 
   function netEnd(msg) {
@@ -29360,6 +29419,7 @@ var HUD = (function () {
     NETLOCAL = -1;
     stopNetStream();
     netQ = [];
+    HUD.netDot(null);
     if (wasNet) {
       dice.setRemoteDriven(false);
       if (msg) {
@@ -29406,6 +29466,9 @@ var HUD = (function () {
       onOpen: function () {
         $id('netStatus').textContent = 'Połączono!';
         NET.send({ t: 'hi', name: netName });
+      },
+      onLink: function (ok) {
+        if (isNet()) HUD.netDot(ok ? 'on' : 'off');
       },
       onMsg: function (m) {
         if (m.t === 'hi') {

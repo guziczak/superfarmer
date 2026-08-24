@@ -491,6 +491,15 @@ var HUD = (function () {
     $('swipehint').classList.toggle('show', !!on);
   }
 
+  /** Kropka „online” (gra przez sieć): 'on' = zielona, 'off' = czerwona „łączę…”, null = schowana. */
+  function netDot(state) {
+    var el = $('netdot');
+    if (!state) { el.hidden = true; return; }
+    el.hidden = false;
+    el.classList.toggle('bad', state === 'off');
+    $('netdotTxt').textContent = state === 'off' ? 'łączę…' : 'online';
+  }
+
   function measureInsets() {
     var top = $('topbar').getBoundingClientRect();
     var dock = $('dock').getBoundingClientRect();
@@ -519,6 +528,7 @@ var HUD = (function () {
     hideWin: hideWin,
     confetti: confetti,
     swipeHint: swipeHint,
+    netDot: netDot,
     measureInsets: measureInsets
   };
 })();

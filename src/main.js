@@ -201,6 +201,7 @@
     netQ = [];
     stopNetStream();
     startGame('net', names, bias);
+    HUD.netDot('on');
   }
 
   function netEnd(msg) {
@@ -209,6 +210,7 @@
     NETLOCAL = -1;
     stopNetStream();
     netQ = [];
+    HUD.netDot(null);
     if (wasNet) {
       dice.setRemoteDriven(false);
       if (msg) {
@@ -255,6 +257,9 @@
       onOpen: function () {
         $id('netStatus').textContent = 'Połączono!';
         NET.send({ t: 'hi', name: netName });
+      },
+      onLink: function (ok) {
+        if (isNet()) HUD.netDot(ok ? 'on' : 'off');
       },
       onMsg: function (m) {
         if (m.t === 'hi') {
