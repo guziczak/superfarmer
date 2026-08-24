@@ -76,8 +76,30 @@ var DiceScene = (function () {
     return { verts: verts, faces: faces, normals: normals, tangents: tangents, faceR: faceR };
   }
 
+  /** Wierzchołki bryły z płaszczyzn n_i·x = hs[i] (przecięcia trójek płaszczyzn jak
+      w oryginale — kierunki normalnych zostają, „szlif” przesuwa tylko płaszczyzny). */
+  function deformVerts(dod, hs) {
+    var vFaces = dod.verts.map(function () { return []; });
+    dod.faces.forEach(function (f, fi) { f.forEach(function (vi) { vFaces[vi].push(fi); }); });
+    function det3(r1, r2, r3) {
+      return r1[0] * (r2[1] * r3[2] - r2[2] * r3[1])
+           - r1[1] * (r2[0] * r3[2] - r2[2] * r3[0])
+           + r1[2] * (r2[0] * r3[1] - r2[1] * r3[0]);
+    }
+    return dod.verts.map(function (v, vi) {
+      var a = vFaces[vi][0], b = vFaces[vi][1], c = vFaces[vi][2];
+      var n1 = dod.normals[a], n2 = dod.normals[b], n3 = dod.normals[c];
+      var d = det3(n1, n2, n3);
+      return [
+        det3([hs[a], n1[1], n1[2]], [hs[b], n2[1], n2[2]], [hs[c], n3[1], n3[2]]) / d,
+        det3([n1[0], hs[a], n1[2]], [n2[0], hs[b], n2[2]], [n3[0], hs[c], n3[2]]) / d,
+        det3([n1[0], n1[1], hs[a]], [n2[0], n2[1], hs[b]], [n3[0], n3[1], hs[c]]) / d
+      ];
+    });
+  }
+
   /* ---------- zaokrąglony mesh przez smooth-max (LogSumExp) ---------- */
-  function buildRoundedGeometry(dod, K, detail) {
+  function buildRoundedGeometry(dod, K, detail, hs) {
     var geo = new THREE.IcosahedronGeometry(1, detail || 14);
     var pos = geo.attributes.position;
     var nrm = new Float32Array(pos.count * 3);
@@ -88,7 +110,7 @@ var DiceScene = (function () {
       var l = Math.hypot(ux, uy, uz); ux /= l; uy /= l; uz /= l;
       var d = new Array(12), maxd = -2;
       for (f = 0; f < 12; f++) {
-        d[f] = ux * N[f][0] + uy * N[f][1] + uz * N[f][2];
+        d[f] = (ux * N[f][0] + uy * N[f][1] + uz * N[f][2]) / (hs ? hs[f] : 1);
         if (d[f] > maxd) maxd = d[f];
       }
       var t = 1 / maxd;
@@ -274,7 +296,9 @@ var DiceScene = (function () {
     this._impactLast = 0;
     this._settleTimer = 0;
     this._cockedTries = 0;
+    this.mode = 'w';    // 'w' = ciężarek (środek masy), 's' = szlif (deformacja bryły)
     this.bias = [0, 0]; // obciążenie [kostka A, kostka B] w ułamkach U; + = ciężarek przy drapieżniku
+    this.shape = [0, 0]; // szlif [A, B] w -1..1; + = przeciwległa ścianka mniejsza (drapieżnik rzadziej)
     this.remote = false; // true = kostki odtwarzają transmisję rzutu z drugiego telefonu
     this._lastNet = null;
     this._tmpV = new THREE.Vector3();
@@ -403,6 +427,7 @@ var DiceScene = (function () {
     this._atlasTex = atlasTex;
 
     var geo = buildRoundedGeometry(dod, 13, 14);
+    this._baseGeo = geo;
     var makeHull = function (u) {
       return new CANNON.ConvexPolyhedron({
         vertices: dod.verts.map(function (v) { return new CANNON.Vec3(v[0] * u, v[1] * u, v[2] * u); }),
@@ -442,6 +467,7 @@ var DiceScene = (function () {
       var die = {
         mesh: mesh, body: body, symbols: defs[d].symbols, thrown: false, locked: false,
         predFace: pf, antiFace: af, shapeOff: new CANNON.Vec3(),
+        hs: null, maxH: 1, shapeGeo: null,
         plugs: [this._makePlug(pf), this._makePlug(af)]
       };
       mesh.add(die.plugs[0]);
@@ -574,16 +600,42 @@ var DiceScene = (function () {
     return plug;
   };
 
-  /** (Prze)buduje bryłę fizyczną kostki `i` dla bieżącego U i obciążenia this.bias[i]:
-      hull dodany z offsetem -e·U·n_drapieżnika, czyli środek masy wędruje KU tej ściance
-      przy e > 0 (drapieżnik częściej na dole) i OD niej przy e < 0. */
+  /** Mapowanie suwaka szlifu na dystans płaszczyzny ścianki PRZECIWLEGŁEJ:
+      s>0 → mniejsza (h→1.6, drapieżnik rzadziej), s<0 → większa/wcięta (h→0.75, częściej). */
+  function hFromS(s) { return s > 0 ? 1 + 0.6 * s : 1 + 0.25 * s; }
+
+  /** (Prze)buduje bryłę fizyczną i mesh kostki `i` wg trybu:
+      'w' — hull z offsetem środka masy (-e·U·n_drapieżnika);
+      's' — bryła zdeformowana (płaszczyzna ścianki przeciwległej na dystansie hFromS). */
   P._rebuildBody = function (i) {
     var d = this.dice[i], U = this.U;
-    var e = this.bias[i] || 0;
+    var e = this.mode === 'w' ? (this.bias[i] || 0) : 0;
+    var s = this.mode === 's' ? (this.shape[i] || 0) : 0;
     var n = this.dod.normals[d.predFace];
     d.shapeOff.set(-e * U * n[0], -e * U * n[1], -e * U * n[2]);
+    var hull;
+    if (s !== 0) {
+      var hs = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+      hs[d.antiFace] = hFromS(s);
+      d.hs = hs;
+      d.maxH = Math.max(1, hs[d.antiFace]);
+      var dv = deformVerts(this.dod, hs);
+      hull = new CANNON.ConvexPolyhedron({
+        vertices: dv.map(function (v) { return new CANNON.Vec3(v[0] * U, v[1] * U, v[2] * U); }),
+        faces: this.dod.faces.map(function (f) { return f.slice(); })
+      });
+      if (d.shapeGeo) d.shapeGeo.dispose();
+      d.shapeGeo = buildRoundedGeometry(this.dod, 13, 14, hs);
+      d.mesh.geometry = d.shapeGeo;
+    } else {
+      d.hs = null;
+      d.maxH = 1;
+      hull = this._makeHull(U);
+      if (d.mesh.geometry !== this._baseGeo) d.mesh.geometry = this._baseGeo;
+      if (d.shapeGeo) { d.shapeGeo.dispose(); d.shapeGeo = null; }
+    }
     while (d.body.shapes.length) d.body.removeShape(d.body.shapes[0]);
-    d.body.addShape(this._makeHull(U), new CANNON.Vec3(d.shapeOff.x, d.shapeOff.y, d.shapeOff.z));
+    d.body.addShape(hull, new CANNON.Vec3(d.shapeOff.x, d.shapeOff.y, d.shapeOff.z));
     d.body.updateMassProperties();
     d.body.updateBoundingRadius();
     d.body.sleepSpeedLimit = U * 0.28;
@@ -594,20 +646,23 @@ var DiceScene = (function () {
     d.plugs[1].scale.setScalar(ps);
   };
 
-  /** Obciążenie [eA, eB] w ułamkach U: ±1 = środek masy aż na płaszczyźnie ścianki.
+  /** Strojenie kostek: {m:'w'|'s', v:[a,b]} w -1..1 (legacy: sama tablica = ciężarek).
       Stosować między rzutami. */
-  P.setBias = function (arr) {
-    var a = arr && arr.length === 2 ? arr : [0, 0];
-    this.bias = [
-      Math.max(-1, Math.min(1, +a[0] || 0)),
-      Math.max(-1, Math.min(1, +a[1] || 0))
-    ];
+  P.setTuning = function (t) {
+    var m = 'w', v = [0, 0];
+    if (t && t.length === 2) { v = t; }
+    else if (t && (t.m === 'w' || t.m === 's') && t.v && t.v.length === 2) { m = t.m; v = t.v; }
+    var cl = function (x) { return Math.max(-1, Math.min(1, +x || 0)); };
+    this.mode = m;
+    this.bias = m === 'w' ? [cl(v[0]), cl(v[1])] : [0, 0];
+    this.shape = m === 's' ? [cl(v[0]), cl(v[1])] : [0, 0];
     for (var i = 0; i < 2; i++) {
       this._unlockDie(i);
       this._rebuildBody(i);
     }
     if (this.state === 'idle') this._restDice(false);
   };
+  P.setBias = P.setTuning; // alias zgodności
 
   /* ---------- transmisja rzutu między telefonami ----------
      Rzut liczy fizyka na telefonie rzucającego; drugi telefon odtwarza wierny
@@ -705,7 +760,7 @@ var DiceScene = (function () {
         shellMat.transparent = true;
         shellMat.opacity = 0.4;
         shellMat.depthWrite = false;
-        var shell = new THREE.Mesh(die.mesh.geometry, shellMat);
+        var shell = new THREE.Mesh(this._baseGeo, shellMat);
         shell.renderOrder = 2; // skorupa MALOWANA PO kuli → kula widoczna „w środku”
         if (!this._brassMat) this._makePlug(die.predFace); // inicjalizacja materiału
         var ball = new THREE.Mesh(new THREE.SphereGeometry(0.155, 20, 14), this._brassMat);
@@ -715,7 +770,8 @@ var DiceScene = (function () {
         sc.add(shell);
         var pv0 = {
           r: r, sc: sc, cam: cam, ball: ball, shell: shell, n: n,
-          tq: new THREE.Quaternion(), tp: new THREE.Vector3(), ts: 0
+          tq: new THREE.Quaternion(), tp: new THREE.Vector3(), ts: 0,
+          sVal: 0, sGeo: null
         };
         pv0.tq.setFromUnitVectors(
           new THREE.Vector3(n[0], n[1], n[2]),
@@ -727,20 +783,48 @@ var DiceScene = (function () {
         this._prev.push(pv0);
       }
     }
+    var m = 'w', vv = [0, 0];
+    if (biasArr && biasArr.length === 2) vv = biasArr;
+    else if (biasArr && biasArr.v) { m = biasArr.m === 's' ? 's' : 'w'; vv = biasArr.v; }
     for (var j = 0; j < 2; j++) {
-      var e = (biasArr && biasArr[j]) || 0;
+      var e = +vv[j] || 0;
       var pv = this._prev[j];
-      var t = e * (1 - 0.155); // przy ±100% kula styka się ze ścianką od wewnątrz
-      pv.tp.set(pv.n[0] * t, pv.n[1] * t, pv.n[2] * t);
-      pv.ts = Math.abs(e) > 0.01 ? 1 : 0;
-      // kostka dokręca się ścianką, ku której wędruje ciężarek:
-      // plus → drapieżnik z prawej-frontu, minus → przeciwległa z lewej-frontu
-      var neg = e < -0.01;
-      var from = neg
-        ? new THREE.Vector3(-pv.n[0], -pv.n[1], -pv.n[2])
-        : new THREE.Vector3(pv.n[0], pv.n[1], pv.n[2]);
-      var to = new THREE.Vector3(neg ? -0.66 : 0.66, 0.2, 0.72).normalize();
-      pv.tq.setFromUnitVectors(from, to);
+      if (m === 's') {
+        // SZLIF: kula znika, skorupa realnie zdeformowana, szlifowana ścianka frontem z lewej
+        pv.ts = 0;
+        if (pv.sVal !== e) {
+          pv.sVal = e;
+          if (pv.sGeo) { pv.sGeo.dispose(); pv.sGeo = null; }
+          if (e !== 0) {
+            var hs = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+            hs[this.dice[j].antiFace] = hFromS(e);
+            pv.sGeo = buildRoundedGeometry(this.dod, 13, 9, hs);
+            pv.shell.geometry = pv.sGeo;
+          } else {
+            pv.shell.geometry = this._baseGeo;
+          }
+        }
+        pv.tq.setFromUnitVectors(
+          new THREE.Vector3(-pv.n[0], -pv.n[1], -pv.n[2]),
+          new THREE.Vector3(-0.6, 0.2, 0.78).normalize()
+        );
+      } else {
+        // CIĘŻAREK: bryła foremna + kula na prawdziwej pozycji
+        if (pv.sVal !== 0) {
+          pv.sVal = 0;
+          if (pv.sGeo) { pv.sGeo.dispose(); pv.sGeo = null; }
+          pv.shell.geometry = this._baseGeo;
+        }
+        var t = e * (1 - 0.155); // przy ±100% kula styka się ze ścianką od wewnątrz
+        pv.tp.set(pv.n[0] * t, pv.n[1] * t, pv.n[2] * t);
+        pv.ts = Math.abs(e) > 0.01 ? 1 : 0;
+        var neg = e < -0.01;
+        var from = neg
+          ? new THREE.Vector3(-pv.n[0], -pv.n[1], -pv.n[2])
+          : new THREE.Vector3(pv.n[0], pv.n[1], pv.n[2]);
+        var to = new THREE.Vector3(neg ? -0.66 : 0.66, 0.2, 0.72).normalize();
+        pv.tq.setFromUnitVectors(from, to);
+      }
     }
     if (!this._prevRaf) this._prevTick();
   };
@@ -825,7 +909,8 @@ var DiceScene = (function () {
       b.quaternion.set(yaw.x, yaw.y, yaw.z, yaw.w);
       var so = this.dice[i].shapeOff;
       var oy = this._tmpV.set(so.x, so.y, so.z).applyQuaternion(yaw).y;
-      b.position.set(r.cx + (i === 0 ? -1.35 : 1.35) * U, U - oy + 0.01, r.cz + r.h * 0.18 + (i === 0 ? 0.2 : -0.2) * U);
+      var hf = this.dice[i].hs ? this.dice[i].hs[f] : 1; // wysokość spoczynku na tej ściance
+      b.position.set(r.cx + (i === 0 ? -1.35 : 1.35) * U, U * hf - oy + 0.01, r.cz + r.h * 0.18 + (i === 0 ? 0.2 : -0.2) * U);
       b.velocity.setZero();
       b.angularVelocity.setZero();
       b.sleep();
@@ -870,7 +955,7 @@ var DiceScene = (function () {
       // obciążeniu przesunięty nawet o cały U) — leży na filcu, nie na drugiej kostce
       var gy = b.position.y + this._tmpV.set(d.shapeOff.x, d.shapeOff.y, d.shapeOff.z)
         .applyQuaternion(d.mesh.quaternion).y;
-      if (gy > this.U * 1.35) continue;
+      if (gy > this.U * (d.maxH + 0.35)) continue;
       if (this._faceUp(d).dot < 0.99999) continue;  // przekrzywiona zostaje żywa
       this._lockDie(i);
     }

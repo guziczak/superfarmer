@@ -19,11 +19,14 @@ var HUD = (function () {
      0 = środek kostki, +100% = na płaszczyźnie ścianki drapieżnika, −100% = przeciwnej.
      Prawdopodobieństwa z kalibracji dev/bias-sim.mjs (RARE: ciężarek ku drapieżnikowi;
      OFTEN — z symetrii środkowej bryły — ku przeciwnej). */
-  var BIAS_RARE = [[0, 8.33], [0.15, 4.6], [0.3, 4.3], [0.5, 2.2], [0.75, 1.5], [1, 1.3]];
-  var BIAS_OFTEN = [[0, 8.33], [0.15, 16.8], [0.3, 23.2], [0.5, 55.3], [0.75, 98.5], [1, 98.7]];
+  var W_RARE = [[0, 8.33], [0.15, 4.6], [0.3, 4.3], [0.5, 2.2], [0.75, 1.5], [1, 1.3]];
+  var W_OFTEN = [[0, 8.33], [0.15, 16.8], [0.3, 23.2], [0.5, 55.3], [0.75, 98.5], [1, 98.7]];
+  var S_RARE = [[0, 8.33], [0.25, 3.6], [0.58, 0.96], [1, 0.36]];
+  var S_OFTEN = [[0, 8.33], [0.6, 18.8], [1, 25.3]];
+  var BMODE = 'w';
 
-  function biasPct(e) {
-    var t = e >= 0 ? BIAS_RARE : BIAS_OFTEN;
+  function biasPct(m, e) {
+    var t = e >= 0 ? (m === 's' ? S_RARE : W_RARE) : (m === 's' ? S_OFTEN : W_OFTEN);
     var x = Math.min(1, Math.abs(e));
     for (var i = 1; i < t.length; i++) {
       if (x <= t[i][0]) {
@@ -37,19 +40,33 @@ var HUD = (function () {
   function fmtPos(e) { var v = Math.round(e * 100); return (v > 0 ? '+' : '') + v + '%'; }
   function sliderToE(v) { return v / 100; }
   function eToSlider(e) { return Math.round(e * 100); }
-  function currentBias() { return [sliderToE(+$('biasA').value), sliderToE(+$('biasB').value)]; }
+  function currentBias() { return { m: BMODE, v: [sliderToE(+$('biasA').value), sliderToE(+$('biasB').value)] }; }
   function refreshBiasUI() {
     var b = currentBias();
-    $('biasPctA').textContent = fmtPos(b[0]);
-    $('biasPctB').textContent = fmtPos(b[1]);
-    $('biasSubA').textContent = 'wilk wypada ' + fmtPct(biasPct(b[0]));
-    $('biasSubB').textContent = 'lis wypada ' + fmtPct(biasPct(b[1]));
+    $('biasPctA').textContent = fmtPos(b.v[0]);
+    $('biasPctB').textContent = fmtPos(b.v[1]);
+    $('biasSubA').textContent = 'wilk wypada ' + fmtPct(biasPct(b.m, b.v[0]));
+    $('biasSubB').textContent = 'lis wypada ' + fmtPct(biasPct(b.m, b.v[1]));
+    var endsW = function (who) { return '<span>−100% naprzeciw</span><span>+100% przy ' + who + '</span>'; };
+    var endsS = '<span>−100% · częściej</span><span>+100% · rzadziej</span>';
+    $('biasEndsA').innerHTML = b.m === 's' ? endsS : endsW('wilku');
+    $('biasEndsB').innerHTML = b.m === 's' ? endsS : endsW('lisie');
     if (cb.onBiasPreview) cb.onBiasPreview(b);
   }
+  function setBiasMode(m) {
+    BMODE = m === 's' ? 's' : 'w';
+    var rows = $('segMode').querySelectorAll('button');
+    for (var i = 0; i < rows.length; i++) rows[i].classList.toggle('on', rows[i].getAttribute('data-m') === BMODE);
+    refreshBiasUI();
+  }
   function biasMenuText(S) {
-    var b = S && S.bias ? S.bias : [0, 0];
-    if (!b[0] && !b[1]) return 'uczciwe';
-    return 'wilk ' + fmtPct(biasPct(b[0])) + ' · lis ' + fmtPct(biasPct(b[1]));
+    var b = S && S.bias ? S.bias : null;
+    var m = 'w', v = [0, 0];
+    if (b && b.length === 2) v = b;
+    else if (b && b.v) { m = b.m === 's' ? 's' : 'w'; v = b.v; }
+    if (!v[0] && !v[1]) return 'uczciwe';
+    return (m === 's' ? 'szlif: ' : 'ciężarek: ') +
+      'wilk ' + fmtPct(biasPct(m, v[0])) + ' · lis ' + fmtPct(biasPct(m, v[1]));
   }
 
   /* ---------- karty graczy ---------- */
@@ -351,11 +368,10 @@ var HUD = (function () {
     var nr0 = $('btnNetResume0');
     nr0.hidden = !o.netResume;
     if (o.netResume) nr0.textContent = '📶 Wznów przez sieć: ' + o.netResume;
-    var b = o.bias && o.bias.length === 2 ? o.bias : [0, 0];
-    $('biasA').value = eToSlider(b[0]);
-    $('biasB').value = eToSlider(b[1]);
-    refreshBiasUI();
-    $('advpanel').hidden = !(b[0] || b[1]);
+    $('biasA').value = 0;
+    $('biasB').value = 0;
+    setBiasMode('w');
+    $('advpanel').hidden = true;
     $('btnSound0').textContent = AUDIO.isEnabled() ? 'Dźwięk: wł.' : 'Dźwięk: wył.';
     $('modeButtons').hidden = false;
     $('nameform').hidden = true;
@@ -451,6 +467,12 @@ var HUD = (function () {
     });
     $('biasA').addEventListener('input', refreshBiasUI);
     $('biasB').addEventListener('input', refreshBiasUI);
+    $('segMode').addEventListener('click', function (ev) {
+      var btn = ev.target.closest('button');
+      if (!btn) return;
+      AUDIO.ui();
+      setBiasMode(btn.getAttribute('data-m'));
+    });
     $('btnSolo').addEventListener('click', function () { cb.onModeStart('solo', null, currentBias()); });
     $('btnDuo').addEventListener('click', function () {
       AUDIO.ui();

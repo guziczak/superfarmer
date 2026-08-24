@@ -54,8 +54,30 @@ function buildDodeca() {
 }
 
 const U = 1.18;
-// opcjonalne obciążenie kostek jak w trybie zaawansowanym: node dev/settle-sim.mjs 0.25 | -0.25
+// opcjonalne strojenie jak w trybie zaawansowanym:
+//   node dev/settle-sim.mjs <ciężarek e> <szlif h>   np. 0.25 | -0.25 | 0 1.6 | 0 0.75
 const BIAS = Number(process.argv[2]) || 0;
+const SHAPE_H = Number(process.argv[3]) || 1;
+
+/** Wierzchołki z płaszczyzn n_i·x = hs[i] — lustro dice3d.deformVerts. */
+function deformVerts(dod, hs) {
+  const vFaces = dod.verts.map(() => []);
+  dod.faces.forEach((f, fi) => f.forEach(vi => vFaces[vi].push(fi)));
+  const det3 = (r1, r2, r3) =>
+    r1[0] * (r2[1] * r3[2] - r2[2] * r3[1])
+    - r1[1] * (r2[0] * r3[2] - r2[2] * r3[0])
+    + r1[2] * (r2[0] * r3[1] - r2[1] * r3[0]);
+  return dod.verts.map((v, vi) => {
+    const [a, b, c] = vFaces[vi];
+    const n1 = dod.normals[a], n2 = dod.normals[b], n3 = dod.normals[c];
+    const d = det3(n1, n2, n3);
+    return [
+      det3([hs[a], n1[1], n1[2]], [hs[b], n2[1], n2[2]], [hs[c], n3[1], n3[2]]) / d,
+      det3([n1[0], hs[a], n1[2]], [n2[0], hs[b], n2[2]], [n3[0], hs[c], n3[2]]) / d,
+      det3([n1[0], n1[1], hs[a]], [n2[0], n2[1], hs[b]], [n3[0], n3[1], hs[c]]) / d
+    ];
+  });
+}
 const rect = { x0: -9, x1: 9, z0: -5.2, z1: 5.2, cx: 0, cz: 0, w: 18, h: 10.4 };
 const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -34, 0) });
 world.allowSleep = true;
@@ -80,10 +102,17 @@ for (const d of [
   world.addBody(b);
 }
 const dod = buildDodeca();
+if (SHAPE_H !== 1) console.log(`szlif: ścianka 2 (przeciwległa drapieżnikowi) na h=${SHAPE_H}\n`);
+const shapeVerts = (() => {
+  if (SHAPE_H === 1) return dod.verts;
+  const hs = new Array(12).fill(1);
+  hs[2] = SHAPE_H;
+  return deformVerts(dod, hs);
+})();
 const dice = [];
 for (let d = 0; d < 2; d++) {
   const shape = new CANNON.ConvexPolyhedron({
-    vertices: dod.verts.map(v => new CANNON.Vec3(v[0] * U, v[1] * U, v[2] * U)),
+    vertices: shapeVerts.map(v => new CANNON.Vec3(v[0] * U, v[1] * U, v[2] * U)),
     faces: dod.faces.map(f => f.slice())
   });
   const body = new CANNON.Body({ mass: 1.2, material: diceMat });

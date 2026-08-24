@@ -674,6 +674,23 @@ button {
   margin-bottom: 10px;
   text-align: center;
 }
+.seg { display: flex; gap: 6px; margin-bottom: 12px; }
+.seg button {
+  flex: 1;
+  padding: 8px 6px;
+  border-radius: 11px;
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 225, 170, 0.06);
+  color: var(--cream-dim);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.seg button.on {
+  background: rgba(240, 166, 60, 0.16);
+  border-color: var(--amber);
+  color: var(--cream);
+}
+.seg button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .biasrow { margin-bottom: 12px; display: flex; gap: 10px; align-items: center; }
 .bprev {
   width: 84px;

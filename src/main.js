@@ -46,7 +46,7 @@
     players.forEach(function (p) { p.herd = RULES.emptyHerd(); });
     return {
       mode: mode,
-      bias: bias && bias.length === 2 ? bias : [0, 0],
+      bias: normTuning(bias),
       players: players,
       stock: JSON.parse(JSON.stringify(RULES.STOCK_INIT)),
       cur: 0,
@@ -242,8 +242,8 @@
       S = resume.state;
       S.mode = 'net';
       S.phase = 'preroll';
-      if (!S.bias || S.bias.length !== 2) S.bias = [0, 0];
-      dice.setBias(S.bias);
+      S.bias = normTuning(S.bias);
+      dice.setTuning(S.bias);
       HUD.hideStart();
       HUD.hideWin();
       HUD.closeSheets();
@@ -301,7 +301,7 @@
 
   function netConnectFlow(role, name, bias, wantResume) {
     netName = name || (role === 'host' ? 'Gracz 1' : 'Gracz 2');
-    var netBias = bias && bias.length === 2 ? bias : [0, 0];
+    var netBias = normTuning(bias);
     $id('startov').classList.add('compact');
     $id('modeButtons').hidden = true;
     $id('netform').hidden = true;
@@ -532,7 +532,7 @@
   function startGame(mode, names, bias) {
     GEN++;
     S = newState(mode, names, bias);
-    dice.setBias(S.bias);
+    dice.setTuning(S.bias);
     HUD.hideStart();
     HUD.hideWin();
     HUD.closeSheets();
@@ -546,8 +546,8 @@
   function resumeGame(saved) {
     GEN++;
     S = saved;
-    if (!S.bias || S.bias.length !== 2) S.bias = [0, 0];
-    dice.setBias(S.bias);
+    S.bias = normTuning(S.bias);
+    dice.setTuning(S.bias);
     HUD.hideStart();
     HUD.hideWin();
     HUD.closeSheets();
@@ -570,8 +570,16 @@
     try { return JSON.parse(lsGet(LS_NAMES) || 'null'); } catch (e) { return null; }
   }
 
-  // Obciążenie kostek celowo NIE jest zapamiętywane między sesjami:
+  // Strojenie kostek celowo NIE jest zapamiętywane między sesjami:
   // każdy nowy start zaczyna od kostek uczciwych (suwaki na środku).
+  /** Normalizacja strojenia: {m:'w'|'s', v:[a,b]}; legacy tablica = ciężarek. */
+  function normTuning(b) {
+    if (b && b.length === 2) return { m: 'w', v: [+b[0] || 0, +b[1] || 0] };
+    if (b && (b.m === 'w' || b.m === 's') && b.v && b.v.length === 2) {
+      return { m: b.m, v: [+b.v[0] || 0, +b.v[1] || 0] };
+    }
+    return { m: 'w', v: [0, 0] };
+  }
 
   /* ---------- insets / resize ---------- */
   function syncInsets() {
