@@ -730,9 +730,9 @@ var DiceScene = (function () {
     for (var j = 0; j < 2; j++) {
       var e = (biasArr && biasArr[j]) || 0;
       var pv = this._prev[j];
-      pv.ball.visible = Math.abs(e) > 0.01;
       var t = e * (1 - 0.155); // przy ±100% kula styka się ze ścianką od wewnątrz
-      pv.ball.position.set(pv.n[0] * t, pv.n[1] * t, pv.n[2] * t);
+      pv.tp.set(pv.n[0] * t, pv.n[1] * t, pv.n[2] * t);
+      pv.ts = Math.abs(e) > 0.01 ? 1 : 0;
       // kostka dokręca się ścianką, ku której wędruje ciężarek:
       // plus → drapieżnik z prawej-frontu, minus → przeciwległa z lewej-frontu
       var neg = e < -0.01;
@@ -740,8 +740,34 @@ var DiceScene = (function () {
         ? new THREE.Vector3(-pv.n[0], -pv.n[1], -pv.n[2])
         : new THREE.Vector3(pv.n[0], pv.n[1], pv.n[2]);
       var to = new THREE.Vector3(neg ? -0.66 : 0.66, 0.2, 0.72).normalize();
-      pv.shell.quaternion.setFromUnitVectors(from, to);
+      pv.tq.setFromUnitVectors(from, to);
+    }
+    if (!this._prevRaf) this._prevTick();
+  };
+
+  /** Płynne dojście podglądu do celu (slerp obrotu, lerp kuli); rAF tylko w ruchu. */
+  P._prevTick = function () {
+    var busy = false;
+    for (var j = 0; j < 2; j++) {
+      var pv = this._prev[j];
+      pv.shell.quaternion.slerp(pv.tq, 0.16);
+      if (pv.shell.quaternion.angleTo(pv.tq) > 0.004) busy = true;
+      else pv.shell.quaternion.copy(pv.tq);
+      pv.ball.position.lerp(pv.tp, 0.2);
+      if (pv.ball.position.distanceTo(pv.tp) > 0.004) busy = true;
+      else pv.ball.position.copy(pv.tp);
+      var s = pv.ball.scale.x + (pv.ts - pv.ball.scale.x) * 0.22;
+      if (Math.abs(s - pv.ts) > 0.01) busy = true;
+      else s = pv.ts;
+      pv.ball.scale.setScalar(Math.max(0.0001, s));
+      pv.ball.visible = s > 0.02;
       pv.r.render(pv.sc, pv.cam);
+    }
+    if (busy) {
+      var self = this;
+      this._prevRaf = requestAnimationFrame(function () { self._prevTick(); });
+    } else {
+      this._prevRaf = 0;
     }
   };
 
