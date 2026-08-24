@@ -14,6 +14,10 @@ statycznego i na telefonie.
   króliki, wilk pożera wszystko oprócz koni i małego psa, psy bronią, jedna wymiana ze
   Stadem Głównym na turę (w obie strony), limity Stada Głównego.
 - Wygrywa pierwszy komplet: koń, krowa, świnia, owca, królik.
+- **Zaawansowane (opcjonalnie):** suwaki środka ciężkości osobno dla każdej kostki —
+  ciężarek przy ściance wilka/lisa sprawia, że drapieżnik wypada rzadziej (do ~3,6%),
+  przy ściance przeciwnej — częściej (do ~23%); środek = kostki uczciwe (8,3%).
+  Mosiężna kropka na kostce jawnie pokazuje, gdzie siedzi ciężarek.
 
 ## Sterowanie
 
@@ -43,8 +47,9 @@ node dev/serve.mjs          # serwer deweloperski na :8123 (także dla telefonu 
 node build.mjs              # składa index.html oraz dist/superfarmer.artifact.html
 node dev/test-rules.js      # testy logiki zasad (31 asercji)
 node dev/physrepro.mjs full # headless test fizyki (30 rzutów)
-node dev/settle-sim.mjs     # dowód: 30/30 rzutów kończy się płasko (z przerzutami)
+node dev/settle-sim.mjs     # dowód: 30/30 rzutów kończy się płasko (arg: obciążenie, np. 0.25)
 node dev/lock-sim.mjs       # dowód: zastygnięta kostka jest nieruszalna pod ostrzałem
+node dev/bias-sim.mjs       # kalibracja obciążonych kostek (rozkład ścianek vs offset)
 node dev/check-parallel.mjs # dowód równoległości ścianek k12
 ```
 
