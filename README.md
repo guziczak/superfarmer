@@ -4,8 +4,11 @@ Klasyczna gra Karola Borsuka („Hodowla zwierzątek", 1943) w przeglądarce —
 kostkami 3D. Dwie dwunastościenne kostki z fizyką (three.js + cannon-es), rzucane
 **przeciągnięciem palca** po ekranie; interfejs w całości po polsku.
 
-Całość to **jeden plik `index.html`** (~1,1 MB) — działa z `file://`, z dowolnego hostingu
-statycznego i na telefonie.
+Całość to w zasadzie **jeden plik `index.html`** (~1,4 MB) — działa z `file://`, z dowolnego
+hostingu statycznego i na telefonie. Obok leżą tylko drobiazgi PWA (`sw.js`,
+`manifest.webmanifest`, `icon.svg`): po pierwszym załadowaniu z HTTPS gra działa **offline**
+— np. na hotspocie z telefonu bez zasięgu (sieciówka nie potrzebuje internetu, tylko
+wspólnej sieci).
 
 ## Rozgrywka
 

@@ -619,6 +619,17 @@ button {
   color: var(--cream-dim);
   text-align: center;
 }
+.netwarn {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--cream);
+  background: rgba(240, 166, 60, 0.14);
+  border: 1px solid rgba(240, 166, 60, 0.55);
+  border-radius: 14px;
+  padding: 10px 13px;
+  text-align: center;
+}
+.netwarn b { color: var(--amber); }
 .pastewrap { display: flex; flex-direction: column; gap: 8px; }
 .codebox {
   width: 100%;

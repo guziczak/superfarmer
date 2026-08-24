@@ -69,10 +69,14 @@
     <button id="btnNet" class="btn sec">2 graczy — dwa telefony 📶</button>
   </div>
   <div class="modes" id="netform" hidden>
+    <div id="netWarn" class="netwarn" hidden>📵 Nie jesteś na WiFi! Do gry potrzebna wspólna sieć:
+      wejdźcie na to samo WiFi albo <b>włącz hotspot</b> na jednym z telefonów — i lecimy 📶</div>
     <input class="nameinput" id="inpNetName" maxlength="14" placeholder="Twoje imię" autocomplete="off">
     <button id="btnNetResume" class="btn pri" hidden>Wznów przerwaną grę</button>
     <button id="btnNetHost" class="btn pri">Załóż grę — pokaż kod</button>
     <button id="btnNetJoin" class="btn sec">Dołącz — zeskanuj kod</button>
+    <div class="advnote">Nie macie WiFi? Włączcie hotspot na jednym z telefonów — gra po pierwszym
+      załadowaniu działa też całkiem bez internetu.</div>
     <button id="btnNetBack" class="link">← wróć</button>
   </div>
   <div class="modes netconn" id="netconn" hidden>

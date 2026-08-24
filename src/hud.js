@@ -458,6 +458,9 @@ var HUD = (function () {
       AUDIO.ui();
       $('modeButtons').hidden = true;
       $('netform').hidden = false;
+      // Android zdradza typ łącza; iOS nie ma tego API (wtedy zostaje stała podpowiedź niżej)
+      var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      $('netWarn').hidden = !(conn && conn.type === 'cellular');
     });
     $('btnNetBack').addEventListener('click', function () {
       $('netform').hidden = true;

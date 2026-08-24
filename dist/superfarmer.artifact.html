@@ -624,6 +624,17 @@ button {
   color: var(--cream-dim);
   text-align: center;
 }
+.netwarn {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--cream);
+  background: rgba(240, 166, 60, 0.14);
+  border: 1px solid rgba(240, 166, 60, 0.55);
+  border-radius: 14px;
+  padding: 10px 13px;
+  text-align: center;
+}
+.netwarn b { color: var(--amber); }
 .pastewrap { display: flex; flex-direction: column; gap: 8px; }
 .codebox {
   width: 100%;
@@ -898,10 +909,14 @@ button {
     <button id="btnNet" class="btn sec">2 graczy — dwa telefony 📶</button>
   </div>
   <div class="modes" id="netform" hidden>
+    <div id="netWarn" class="netwarn" hidden>📵 Nie jesteś na WiFi! Do gry potrzebna wspólna sieć:
+      wejdźcie na to samo WiFi albo <b>włącz hotspot</b> na jednym z telefonów — i lecimy 📶</div>
     <input class="nameinput" id="inpNetName" maxlength="14" placeholder="Twoje imię" autocomplete="off">
     <button id="btnNetResume" class="btn pri" hidden>Wznów przerwaną grę</button>
     <button id="btnNetHost" class="btn pri">Załóż grę — pokaż kod</button>
     <button id="btnNetJoin" class="btn sec">Dołącz — zeskanuj kod</button>
+    <div class="advnote">Nie macie WiFi? Włączcie hotspot na jednym z telefonów — gra po pierwszym
+      załadowaniu działa też całkiem bez internetu.</div>
     <button id="btnNetBack" class="link">← wróć</button>
   </div>
   <div class="modes netconn" id="netconn" hidden>
@@ -29179,6 +29194,9 @@ var HUD = (function () {
       AUDIO.ui();
       $('modeButtons').hidden = true;
       $('netform').hidden = false;
+      // Android zdradza typ łącza; iOS nie ma tego API (wtedy zostaje stała podpowiedź niżej)
+      var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      $('netWarn').hidden = !(conn && conn.type === 'cellular');
     });
     $('btnNetBack').addEventListener('click', function () {
       $('netform').hidden = true;

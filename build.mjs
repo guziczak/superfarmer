@@ -5,6 +5,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -61,16 +62,68 @@ const index = `<!doctype html>
 <meta name="theme-color" content="#241a10">
 <title>Superfarmer 3D</title>
 <link rel="icon" href="${faviconSVG}">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.svg">
 ${fonts}
 <style>${css}</style>
 </head>
 <body>
 ${markup}
 ${scripts}
+<script>
+/* PWA: po pierwszym załadowaniu gra działa offline (np. hotspot bez internetu) */
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  navigator.serviceWorker.register('./sw.js').catch(function () {});
+}
+</script>
 </body>
 </html>
 `;
 writeFileSync(join(root, 'index.html'), index);
+
+/* ---------- PWA: service worker + manifest + ikona ---------- */
+const ver = createHash('md5').update(index).digest('hex').slice(0, 10);
+const sw = `// Superfarmer 3D — cache offline (network-first: online zawsze świeża wersja).
+const VER = 'sf3d-${ver}';
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(VER).then((c) => c.addAll(['./'])).then(() => self.skipWaiting()));
+});
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys()
+      .then((ks) => Promise.all(ks.filter((k) => k !== VER).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
+  );
+});
+self.addEventListener('fetch', (e) => {
+  if (e.request.method !== 'GET') return;
+  e.respondWith(
+    fetch(e.request).then((resp) => {
+      if (resp && (resp.ok || resp.type === 'opaque')) {
+        const copy = resp.clone();
+        caches.open(VER).then((c) => c.put(e.request, copy)).catch(() => {});
+      }
+      return resp;
+    }).catch(() =>
+      caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match('./'))
+    )
+  );
+});
+`;
+writeFileSync(join(root, 'sw.js'), sw);
+
+writeFileSync(join(root, 'manifest.webmanifest'), JSON.stringify({
+  name: 'Superfarmer 3D',
+  short_name: 'Superfarmer',
+  display: 'standalone',
+  background_color: '#241a10',
+  theme_color: '#241a10',
+  start_url: './',
+  icons: [{ src: './icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }]
+}, null, 1));
+
+writeFileSync(join(root, 'icon.svg'),
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#241a10"/><path d="M50 13 83 37 70 75 30 75 17 37Z" fill="#f4ecd9" stroke="#8a5716" stroke-width="3" stroke-linejoin="round"/><circle cx="50" cy="51" r="7" fill="#33261b"/><circle cx="38" cy="38" r="4.5" fill="#33261b"/><circle cx="62" cy="38" r="4.5" fill="#33261b"/><circle cx="41" cy="64" r="4.5" fill="#33261b"/><circle cx="59" cy="64" r="4.5" fill="#33261b"/></svg>`);
 
 /* ---------- wariant artefaktowy (bez szkieletu) ---------- */
 const artifact = `<title>Superfarmer 3D</title>

@@ -1,0 +1,16 @@
+{
+ "name": "Superfarmer 3D",
+ "short_name": "Superfarmer",
+ "display": "standalone",
+ "background_color": "#241a10",
+ "theme_color": "#241a10",
+ "start_url": "./",
+ "icons": [
+  {
+   "src": "./icon.svg",
+   "sizes": "any",
+   "type": "image/svg+xml",
+   "purpose": "any"
+  }
+ ]
+}
