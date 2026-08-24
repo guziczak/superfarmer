@@ -341,6 +341,10 @@ var HUD = (function () {
   /* ---------- start / wygrana ---------- */
   function showStart(o) {
     $('btnResume').hidden = !o.canResume;
+    if (o.canResume && o.resumeLabel) $('btnResume').textContent = o.resumeLabel;
+    var nr0 = $('btnNetResume0');
+    nr0.hidden = !o.netResume;
+    if (o.netResume) nr0.textContent = '📶 Wznów przez sieć: ' + o.netResume;
     var b = o.bias && o.bias.length === 2 ? o.bias : [0, 0];
     $('biasA').value = eToSlider(b[0]);
     $('biasB').value = eToSlider(b[1]);
@@ -460,6 +464,7 @@ var HUD = (function () {
       $('modeButtons').hidden = false;
     });
     $('btnNetResume').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
+    $('btnNetResume0').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
     $('btnNetHost').addEventListener('click', function () { AUDIO.ui(); cb.onNetHost($('inpNetName').value.trim(), currentBias()); });
     $('btnNetJoin').addEventListener('click', function () { AUDIO.ui(); cb.onNetJoin($('inpNetName').value.trim()); });
     $('btnNetCancel').addEventListener('click', function () { AUDIO.ui(); cb.onNetCancel(); });

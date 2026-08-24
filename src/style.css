@@ -712,11 +712,18 @@ button {
   position: fixed;
   left: 50%; top: 42%;
   transform: translate(-50%, -50%) scale(0.7);
-  z-index: 16;
+  z-index: 31; /* nad menu głównym (20) i pełnoekranowym QR (30) — toasty muszą być widoczne zawsze */
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  background: rgba(20, 13, 7, 0.88);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  padding: 18px 26px 16px;
+  box-shadow: var(--shadow);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.25s, transform 0.3s cubic-bezier(0.2, 1.5, 0.4, 1);

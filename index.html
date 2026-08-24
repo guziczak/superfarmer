@@ -725,11 +725,18 @@ button {
   position: fixed;
   left: 50%; top: 42%;
   transform: translate(-50%, -50%) scale(0.7);
-  z-index: 16;
+  z-index: 31; /* nad menu głównym (20) i pełnoekranowym QR (30) — toasty muszą być widoczne zawsze */
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  background: rgba(20, 13, 7, 0.88);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  padding: 18px 26px 16px;
+  box-shadow: var(--shadow);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.25s, transform 0.3s cubic-bezier(0.2, 1.5, 0.4, 1);
@@ -894,6 +901,7 @@ button {
   <h1 class="display">SUPER&shy;FARMER</h1>
   <p class="tag">Rzucaj kośćmi przeciągnięciem palca, rozmnażaj stado i jako pierwszy zbierz konia, krowę, świnię, owcę i królika.</p>
   <div class="modes" id="modeButtons">
+    <button id="btnNetResume0" class="btn pri" hidden></button>
     <button id="btnResume" class="btn pri" hidden>Wznów grę</button>
     <button id="btnSolo" class="btn pri">Graj z Zenkiem 🤖</button>
     <button id="btnDuo" class="btn sec">2 graczy — jeden telefon</button>
@@ -29064,6 +29072,10 @@ var HUD = (function () {
   /* ---------- start / wygrana ---------- */
   function showStart(o) {
     $('btnResume').hidden = !o.canResume;
+    if (o.canResume && o.resumeLabel) $('btnResume').textContent = o.resumeLabel;
+    var nr0 = $('btnNetResume0');
+    nr0.hidden = !o.netResume;
+    if (o.netResume) nr0.textContent = '📶 Wznów przez sieć: ' + o.netResume;
     var b = o.bias && o.bias.length === 2 ? o.bias : [0, 0];
     $('biasA').value = eToSlider(b[0]);
     $('biasB').value = eToSlider(b[1]);
@@ -29183,6 +29195,7 @@ var HUD = (function () {
       $('modeButtons').hidden = false;
     });
     $('btnNetResume').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
+    $('btnNetResume0').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
     $('btnNetHost').addEventListener('click', function () { AUDIO.ui(); cb.onNetHost($('inpNetName').value.trim(), currentBias()); });
     $('btnNetJoin').addEventListener('click', function () { AUDIO.ui(); cb.onNetJoin($('inpNetName').value.trim()); });
     $('btnNetCancel').addEventListener('click', function () { AUDIO.ui(); cb.onNetCancel(); });
@@ -29392,6 +29405,13 @@ var HUD = (function () {
 
   function clearNetSave() { lsDel(LS_NETSAVE); }
 
+  function saveLabel() {
+    var s = loadSave();
+    if (!s) return null;
+    if (s.mode === 'solo') return 'Wznów grę z Zenkiem (runda ' + s.turnCount + ')';
+    return 'Wznów: ' + s.players[0].name + ' vs ' + s.players[1].name + ' (runda ' + s.turnCount + ')';
+  }
+
   function netResumeLabel() {
     var ns = loadNetSave();
     if (!ns) return null;
@@ -29561,6 +29581,7 @@ var HUD = (function () {
   function netConnectFlow(role, name, bias, wantResume) {
     netName = name || (role === 'host' ? 'Gracz 1' : 'Gracz 2');
     var netBias = bias && bias.length === 2 ? bias : [0, 0];
+    $id('modeButtons').hidden = true;
     $id('netform').hidden = true;
     $id('netconn').hidden = false;
     $id('qrOut').hidden = true;
@@ -29604,8 +29625,13 @@ var HUD = (function () {
         onNetMsg(m);
       },
       onClose: function () {
-        if (isNet()) netEnd('Połączenie z drugim telefonem przerwane');
-        else $id('netStatus').textContent = 'Połączenie przerwane — spróbujcie od nowa';
+        if (isNet()) {
+          netEnd('Połączenie z drugim telefonem przerwane');
+        } else {
+          // porażka jeszcze na etapie parowania: wyraźny toast + powrót do panelu
+          HUD.eventBig({ icon: null, t1: 'NIE UDAŁO SIĘ', t2: 'Telefony się nie połączyły — spróbujcie jeszcze raz. Najpewniejszy ratunek: hotspot z jednego z telefonów.', cls: 'bad' }, 3000);
+          netCancel();
+        }
       }
     };
     if (role === 'host') NET.startHost(netUiEls(), cbs);
@@ -29815,7 +29841,7 @@ var HUD = (function () {
     HUD.hideWin();
     HUD.closeSheets();
     dice.setInteractive(false);
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
   }
 
   function storedNames() {
@@ -29981,7 +30007,7 @@ var HUD = (function () {
     }, { passive: false });
 
     syncInsets();
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
     // uchwyt diagnostyczny (devtools)
     window.__SF = { dice: dice, get state() { return S; } };
   }

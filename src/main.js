@@ -125,6 +125,13 @@
 
   function clearNetSave() { lsDel(LS_NETSAVE); }
 
+  function saveLabel() {
+    var s = loadSave();
+    if (!s) return null;
+    if (s.mode === 'solo') return 'Wznów grę z Zenkiem (runda ' + s.turnCount + ')';
+    return 'Wznów: ' + s.players[0].name + ' vs ' + s.players[1].name + ' (runda ' + s.turnCount + ')';
+  }
+
   function netResumeLabel() {
     var ns = loadNetSave();
     if (!ns) return null;
@@ -294,6 +301,7 @@
   function netConnectFlow(role, name, bias, wantResume) {
     netName = name || (role === 'host' ? 'Gracz 1' : 'Gracz 2');
     var netBias = bias && bias.length === 2 ? bias : [0, 0];
+    $id('modeButtons').hidden = true;
     $id('netform').hidden = true;
     $id('netconn').hidden = false;
     $id('qrOut').hidden = true;
@@ -337,8 +345,13 @@
         onNetMsg(m);
       },
       onClose: function () {
-        if (isNet()) netEnd('Połączenie z drugim telefonem przerwane');
-        else $id('netStatus').textContent = 'Połączenie przerwane — spróbujcie od nowa';
+        if (isNet()) {
+          netEnd('Połączenie z drugim telefonem przerwane');
+        } else {
+          // porażka jeszcze na etapie parowania: wyraźny toast + powrót do panelu
+          HUD.eventBig({ icon: null, t1: 'NIE UDAŁO SIĘ', t2: 'Telefony się nie połączyły — spróbujcie jeszcze raz. Najpewniejszy ratunek: hotspot z jednego z telefonów.', cls: 'bad' }, 3000);
+          netCancel();
+        }
       }
     };
     if (role === 'host') NET.startHost(netUiEls(), cbs);
@@ -548,7 +561,7 @@
     HUD.hideWin();
     HUD.closeSheets();
     dice.setInteractive(false);
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
   }
 
   function storedNames() {
@@ -714,7 +727,7 @@
     }, { passive: false });
 
     syncInsets();
-    HUD.showStart({ canResume: !!loadSave(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
     // uchwyt diagnostyczny (devtools)
     window.__SF = { dice: dice, get state() { return S; } };
   }
