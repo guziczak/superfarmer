@@ -588,14 +588,18 @@ var DiceScene = (function () {
     d.body.sleepSpeedLimit = U * 0.28;
     d.plugs[0].visible = e > 0.004;
     d.plugs[1].visible = e < -0.004;
+    var ps = 0.7 + 1.9 * Math.min(1, Math.abs(e)); // plomba rośnie z ciężarem
+    d.plugs[0].scale.setScalar(ps);
+    d.plugs[1].scale.setScalar(ps);
   };
 
-  /** Obciążenie [eA, eB] w ułamkach U (±0.25). Stosować między rzutami. */
+  /** Obciążenie [eA, eB] w ułamkach U: ±1 = środek masy aż na płaszczyźnie ścianki.
+      Stosować między rzutami. */
   P.setBias = function (arr) {
     var a = arr && arr.length === 2 ? arr : [0, 0];
     this.bias = [
-      Math.max(-0.25, Math.min(0.25, +a[0] || 0)),
-      Math.max(-0.25, Math.min(0.25, +a[1] || 0))
+      Math.max(-1, Math.min(1, +a[0] || 0)),
+      Math.max(-1, Math.min(1, +a[1] || 0))
     ];
     for (var i = 0; i < 2; i++) {
       this._unlockDie(i);
@@ -670,6 +674,57 @@ var DiceScene = (function () {
     }
     this.remote = false;
     this._lastNet = null;
+  };
+
+  /* ---------- podgląd 3D kostek w panelu zaawansowanym ----------
+     Małe sceny z prawdziwą geometrią/materiałem kostek; plomba pokazuje stronę
+     i siłę ciężarka. Renderowane tylko przy zmianie suwaka. */
+  P.previewBias = function (cvA, cvB, biasArr) {
+    if (!this._prev) {
+      this._prev = [];
+      for (var i = 0; i < 2; i++) {
+        var cv = i === 0 ? cvA : cvB;
+        var r = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
+        r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+        r.setSize(96, 96, false);
+        r.outputColorSpace = THREE.SRGBColorSpace;
+        r.toneMapping = THREE.ACESFilmicToneMapping;
+        var sc = new THREE.Scene();
+        sc.environment = this.scene.environment; // mosiądz plomby potrzebuje odbić
+        sc.add(new THREE.HemisphereLight('#ffeccb', '#3a2c1c', 1.0));
+        var dl = new THREE.DirectionalLight('#ffe6bd', 2.2);
+        dl.position.set(-2, 3, 4);
+        sc.add(dl);
+        var cam = new THREE.PerspectiveCamera(30, 1, 0.1, 20);
+        cam.position.set(0, 0.7, 4.6);
+        cam.lookAt(0, 0, 0);
+        var die = this.dice[i];
+        var mesh = new THREE.Mesh(die.mesh.geometry, die.mesh.material);
+        var plugs = [this._makePlug(die.predFace), this._makePlug(die.antiFace)];
+        mesh.add(plugs[0]);
+        mesh.add(plugs[1]);
+        sc.add(mesh);
+        this._prev.push({ r: r, sc: sc, cam: cam, plugs: plugs, mesh: mesh, n: this.dod.normals[die.predFace] });
+      }
+    }
+    for (var j = 0; j < 2; j++) {
+      var e = (biasArr && biasArr[j]) || 0;
+      var pv = this._prev[j];
+      pv.plugs[0].visible = e > 0.02;
+      pv.plugs[1].visible = e < -0.02;
+      var s = 0.7 + 1.9 * Math.min(1, Math.abs(e));
+      pv.plugs[0].scale.setScalar(s);
+      pv.plugs[1].scale.setScalar(s);
+      // obciążona ścianka zawsze widoczna, po stronie zgodnej z suwakiem:
+      // plus → drapieżnik w prawo-przód; minus → przeciwległa w lewo-przód
+      var neg = e < -0.02;
+      var from = neg
+        ? new THREE.Vector3(-pv.n[0], -pv.n[1], -pv.n[2])
+        : new THREE.Vector3(pv.n[0], pv.n[1], pv.n[2]);
+      var to = new THREE.Vector3(neg ? -0.72 : 0.72, 0.22, 0.66).normalize();
+      pv.mesh.quaternion.setFromUnitVectors(from, to);
+      pv.r.render(pv.sc, pv.cam);
+    }
   };
 
   P._resizeDice = function () {
@@ -767,7 +822,11 @@ var DiceScene = (function () {
       if (!d.thrown || d.locked) continue;
       var b = d.body;
       if (b.sleepState !== CANNON.Body.SLEEPING) continue;
-      if (b.position.y > this.U * 1.35) continue;   // leży na filcu, nie na drugiej kostce
+      // wysokość GEOMETRYCZNEGO środka bryły (origin ciała = środek masy, przy
+      // obciążeniu przesunięty nawet o cały U) — leży na filcu, nie na drugiej kostce
+      var gy = b.position.y + this._tmpV.set(d.shapeOff.x, d.shapeOff.y, d.shapeOff.z)
+        .applyQuaternion(d.mesh.quaternion).y;
+      if (gy > this.U * 1.35) continue;
       if (this._faceUp(d).dot < 0.99999) continue;  // przekrzywiona zostaje żywa
       this._lockDie(i);
     }

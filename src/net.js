@@ -43,21 +43,26 @@ var NET = (function () {
     return out;
   }
 
-  function packSdp(sdp) {
+  /* kind: 'O' = oferta założyciela, 'A' = odpowiedź dołączającego — wpisany
+     w prefiks kodu, żeby pomyłkę (dwóch hostów, własny kod) wykryć PO POLSKU,
+     zanim WebRTC wypluje kryptyczny błąd. */
+  function packSdp(sdp, kind) {
     var bytes = new TextEncoder().encode(slimSdp(sdp));
+    var tag = (typeof CompressionStream === 'function' ? 'S1' : 'S0') + (kind || '') + '.';
     if (typeof CompressionStream !== 'function') {
-      return Promise.resolve('S0.' + b64url(bytes));
+      return Promise.resolve(tag + b64url(bytes));
     }
     var cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
     return new Response(cs).arrayBuffer().then(function (buf) {
-      return 'S1.' + b64url(new Uint8Array(buf));
+      return tag + b64url(new Uint8Array(buf));
     });
   }
 
   function unpackSdp(code) {
-    var m = String(code).trim().match(/^(S[01])\.([A-Za-z0-9_-]+)$/);
+    var m = String(code).trim().match(/^(S[01])([OA])?\.([A-Za-z0-9_-]+)$/);
     if (!m) return Promise.reject(new Error('To nie jest kod Superfarmera'));
-    var bytes = unb64url(m[2]);
+    var kind = m[2] || null;
+    var bytes = unb64url(m[3]);
     var p;
     if (m[1] === 'S1') {
       if (typeof DecompressionStream !== 'function') return Promise.reject(new Error('Przeglądarka nie obsługuje tego kodu'));
@@ -67,7 +72,7 @@ var NET = (function () {
       p = Promise.resolve(bytes);
     }
     return p.then(function (raw) {
-      return new TextDecoder().decode(raw).split('\n').join('\r\n') + '\r\n';
+      return { sdp: new TextDecoder().decode(raw).split('\n').join('\r\n') + '\r\n', kind: kind };
     });
   }
 
@@ -133,8 +138,10 @@ var NET = (function () {
           var img = cx.getImageData(0, 0, w, h);
           var res = null;
           try { res = jsQR(img.data, w, h, { inversionAttempts: 'dontInvert' }); } catch (e) {}
-          if (res && res.data && /^S[01]\./.test(res.data.trim())) {
+          if (res && res.data && /^S[01][OA]?\./.test(res.data.trim())) {
             var code = res.data.trim();
+            // odrzucony przed chwilą kod (np. własny/założyciela) — skanuj dalej
+            if (code === lastRejected && Date.now() - lastRejectedAt < 4000) return;
             stopScan();
             onCode(code);
           }
@@ -222,13 +229,16 @@ var NET = (function () {
     if (cb.onClose) cb.onClose();
   }
 
-  function armOpenTimeout() {
+  /* Licznik czasu TYLKO na automatyczną fazę łączenia (po wymianie kodów).
+     Na czekanie, aż drugi gracz przepisze/prześle kod, limitu NIE MA —
+     wymiana przez komunikator potrafi trwać minuty; od tego jest „anuluj”. */
+  function armOpenTimeout(ms) {
     clearTimeout(openTimer);
     openTimer = setTimeout(function () {
       if (dc && dc.readyState === 'open') return;
       if (ui) ui.status('Nie udało się połączyć — spróbujcie jeszcze raz (najpewniej: hotspot z telefonu)');
       fail();
-    }, 25000);
+    }, ms || 60000);
   }
 
   /** Start jako założyciel: tworzy ofertę → pokazuje kod → skanuje/przyjmuje odpowiedź. */
@@ -245,12 +255,11 @@ var NET = (function () {
         return pc.createOffer()
           .then(function (o) { return pc.setLocalDescription(o); })
           .then(gathered)
-          .then(function () { return packSdp(pc.localDescription.sdp); })
+          .then(function () { return packSdp(pc.localDescription.sdp, 'O'); })
           .then(function (code) {
             if (closed) return;
             ui.showMyCode(code);
             ui.status('Gracz 2 skanuje ten kod (u siebie: „Dołącz”), a Ty zeskanuj jego odpowiedź poniżej');
-            armOpenTimeout();
           });
       })
       .catch(function (e) { ui.status('Błąd: ' + (e && e.message || e)); fail(); });
@@ -266,31 +275,61 @@ var NET = (function () {
     startScan(ui.video, acceptPeerCode, function (msg) { ui.cameraFailed(msg); });
   }
 
+  var lastRejected = '', lastRejectedAt = 0;
+
+  function rescan() {
+    if (!ui || closed) return;
+    startScan(ui.video, acceptPeerCode, function (msg) { ui.cameraFailed(msg); });
+  }
+
+  function rejectCode(code, msg) {
+    lastRejected = code;
+    lastRejectedAt = Date.now();
+    if (ui) ui.status(msg);
+    rescan();
+  }
+
   /** Przyjmij kod od drugiej strony (ze skanera albo wklejony ręcznie). */
   function acceptPeerCode(code) {
     if (!pc || closed) return;
-    unpackSdp(code).then(function (sdp) {
-      if (pc.localDescription && pc.localDescription.type === 'offer') {
-        // jesteśmy hostem: to odpowiedź
-        ui.status('Łączę…');
-        return pc.setRemoteDescription({ type: 'answer', sdp: sdp });
+    code = String(code).trim();
+    unpackSdp(code).then(function (res) {
+      var isHost = !!(pc.localDescription && pc.localDescription.type === 'offer');
+      if (isHost && res.kind === 'O') {
+        rejectCode(code, 'To kod ZAŁOŻYCIELA gry (może Twój własny?). Drugi gracz nie zakłada swojej — on tapa „Dołącz”, skanuje kod z TWOJEGO ekranu, a Ty potem jego odpowiedź.');
+        return;
       }
-      // jesteśmy gościem: to oferta → tworzymy odpowiedź
+      if (!isHost && res.kind === 'A') {
+        rejectCode(code, 'To kod-ODPOWIEDŹ. Jako dołączający zeskanuj pierwszy kod — ten z ekranu założyciela.');
+        return;
+      }
+      if (isHost) {
+        // odpowiedź — od teraz łączenie jest automatyczne
+        ui.status('Łączę…');
+        armOpenTimeout(60000);
+        return pc.setRemoteDescription({ type: 'answer', sdp: res.sdp }).catch(function (e) {
+          clearTimeout(openTimer);
+          rejectCode(code, 'Nie udało się przyjąć odpowiedzi — zeskanuj ją jeszcze raz. (' + e.message + ')');
+        });
+      }
+      // jesteśmy gościem: oferta → tworzymy odpowiedź
       ui.status('Odpowiadam…');
-      return pc.setRemoteDescription({ type: 'offer', sdp: sdp })
+      return pc.setRemoteDescription({ type: 'offer', sdp: res.sdp })
         .then(function () { return pc.createAnswer(); })
         .then(function (a) { return pc.setLocalDescription(a); })
         .then(gathered)
-        .then(function () { return packSdp(pc.localDescription.sdp); })
+        .then(function () { return packSdp(pc.localDescription.sdp, 'A'); })
         .then(function (myCode) {
           if (closed) return;
           stopScan();
           ui.showMyCode(myCode);
-          ui.status('Pokaż ten kod założycielowi — po zeskanowaniu gra ruszy sama');
-          armOpenTimeout();
+          ui.status('Pokaż ten kod założycielowi (albo mu go wyślij) — po jego przyjęciu gra ruszy sama');
+        })
+        .catch(function (e) {
+          rejectCode(code, 'Nie udało się przyjąć kodu — zeskanuj jeszcze raz. (' + e.message + ')');
         });
     }).catch(function (e) {
-      ui.status('Zły kod: ' + e.message);
+      rejectCode(code, 'Zły kod: ' + e.message);
     });
   }
 

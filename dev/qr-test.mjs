@@ -34,12 +34,15 @@ const SDP = [
 let fails = 0;
 const ok = (name, cond) => { console.log((cond ? 'ok  ' : 'FAIL'), name); if (!cond) fails++; };
 
-// 1. pack → unpack round-trip
-const code = await NET._packSdp(SDP);
+// 1. pack → unpack round-trip (oferta z typem 'O')
+const code = await NET._packSdp(SDP, 'O');
 console.log(`kod: ${code.length} znaków (${code.slice(0, 24)}…)`);
-ok('kod ma prefiks S1/S0', /^S[01]\./.test(code));
+ok('kod ma prefiks S1O/S0O (typ oferty)', /^S[01]O\./.test(code));
 ok('kod jest zwięzły (<800 znaków)', code.length < 800);
-const back = await NET._unpackSdp(code);
+const un = await NET._unpackSdp(code);
+ok('unpack rozpoznaje typ O', un.kind === 'O');
+ok('odpowiedź dostaje typ A', /^S[01]A\./.test(await NET._packSdp(SDP, 'A')));
+const back = un.sdp;
 const slim = NET._slimSdp(SDP).split('\n').join('\r\n') + '\r\n';
 ok('unpack == slim(SDP)', back === slim);
 ok('slim zachował ufrag/pwd/fingerprint/sctp', ['a=ice-ufrag:Xp9F', 'a=ice-pwd:cJ8kQmVtR2sLuA4dHy6wEbZn', 'a=fingerprint:sha-256', 'a=sctp-port:5000', 'm=application'].every((s) => back.includes(s)));
@@ -73,7 +76,7 @@ ok('odczyt == oryginał', scanned && scanned.data === code);
 
 // 3. pełne domknięcie: zeskanowany kod → unpack → slim SDP
 if (scanned) {
-  const sdp2 = await NET._unpackSdp(scanned.data);
+  const sdp2 = (await NET._unpackSdp(scanned.data)).sdp;
   ok('SDP po pełnej pętli identyczny', sdp2 === slim);
 }
 

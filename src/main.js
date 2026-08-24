@@ -8,6 +8,7 @@
   var LS_SOUND = 'sf3d.sound';
   var LS_TUT = 'sf3d.tutorial';
   var LS_NAMES = 'sf3d.names';
+  var LS_NETNAME = 'sf3d.netname';
   var LS_NETSAVE = 'sf3d.netsave.v1';
 
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -301,6 +302,7 @@
   function netConnectFlow(role, name, bias, wantResume) {
     netName = name || (role === 'host' ? 'Gracz 1' : 'Gracz 2');
     var netBias = bias && bias.length === 2 ? bias : [0, 0];
+    $id('startov').classList.add('compact');
     $id('modeButtons').hidden = true;
     $id('netform').hidden = true;
     $id('netconn').hidden = false;
@@ -561,7 +563,7 @@
     HUD.hideWin();
     HUD.closeSheets();
     dice.setInteractive(false);
-    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), netName: lsGet(LS_NETNAME) || '', bias: [0, 0], netResume: netResumeLabel() });
   }
 
   function storedNames() {
@@ -708,9 +710,22 @@
         if (isNet()) { clearNetSave(); NET.send({ t: 'bye' }); netEnd(null); return; }
         backToMenu();
       },
-      onNetHost: function (name, bias) { AUDIO.unlock(); netConnectFlow('host', name, bias); },
+      onBiasPreview: function (bias) {
+        if (dice && dice.previewBias) {
+          try { dice.previewBias($id('bprevA'), $id('bprevB'), bias); } catch (e) {}
+        }
+      },
+      onNetHost: function (name, bias) {
+        AUDIO.unlock();
+        if (name) lsSet(LS_NETNAME, name);
+        netConnectFlow('host', name, bias);
+      },
       onNetResume: function () { AUDIO.unlock(); netConnectFlow('host', null, null, true); },
-      onNetJoin: function (name) { AUDIO.unlock(); netConnectFlow('guest', name, null); },
+      onNetJoin: function (name) {
+        AUDIO.unlock();
+        if (name) lsSet(LS_NETNAME, name);
+        netConnectFlow('guest', name, null);
+      },
       onNetCancel: function () { netCancel(); }
     });
 
@@ -727,7 +742,7 @@
     }, { passive: false });
 
     syncInsets();
-    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), netName: lsGet(LS_NETNAME) || '', bias: [0, 0], netResume: netResumeLabel() });
     // uchwyt diagnostyczny (devtools)
     window.__SF = { dice: dice, get state() { return S; } };
   }

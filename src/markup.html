@@ -102,16 +102,26 @@
   <div id="advpanel" class="advpanel" hidden>
     <div class="advlabel">Środek ciężkości kostek</div>
     <div class="biasrow">
-      <div class="biashead"><span>Kostka jasna — wilk</span><b id="biasPctA">8,3%</b></div>
-      <input type="range" id="biasA" min="-100" max="100" step="5" value="0" aria-label="Obciążenie kostki jasnej">
-      <div class="biasends"><span>ciężarek przy wilku — rzadziej</span><span>naprzeciw — częściej</span></div>
+      <canvas id="bprevA" class="bprev" width="96" height="96"></canvas>
+      <div class="biascol">
+        <div class="biashead"><span>Kostka jasna — wilk</span><b id="biasPctA">0%</b></div>
+        <input type="range" id="biasA" min="-100" max="100" step="5" value="0" aria-label="Położenie środka ciężkości kostki jasnej">
+        <div class="biasends"><span>−100% naprzeciw</span><span>+100% przy wilku</span></div>
+        <div class="biassub" id="biasSubA">wilk wypada ~8,3%</div>
+      </div>
     </div>
     <div class="biasrow">
-      <div class="biashead"><span>Kostka złota — lis</span><b id="biasPctB">8,3%</b></div>
-      <input type="range" id="biasB" min="-100" max="100" step="5" value="0" aria-label="Obciążenie kostki złotej">
-      <div class="biasends"><span>ciężarek przy lisie — rzadziej</span><span>naprzeciw — częściej</span></div>
+      <canvas id="bprevB" class="bprev" width="96" height="96"></canvas>
+      <div class="biascol">
+        <div class="biashead"><span>Kostka złota — lis</span><b id="biasPctB">0%</b></div>
+        <input type="range" id="biasB" min="-100" max="100" step="5" value="0" aria-label="Położenie środka ciężkości kostki złotej">
+        <div class="biasends"><span>−100% naprzeciw</span><span>+100% przy lisie</span></div>
+        <div class="biassub" id="biasSubB">lis wypada ~8,3%</div>
+      </div>
     </div>
-    <div class="advnote">Fizycznie obciążone kostki: mosiężna kropka pokazuje ściankę z ciężarkiem. Suwak na środku = kostka uczciwa (każda ścianka 8,3%).</div>
+    <div class="advnote">Suwak = położenie środka ciężkości: 0 to środek kostki (uczciwa), +100% ciężarek
+      aż przy ściance drapieżnika (wypada rzadziej), −100% przy przeciwległej (częściej).
+      Mosiężna plomba na kostce pokazuje ciężarek i rośnie z jego siłą.</div>
   </div>
   <div class="linkrow">
     <button class="link" id="btnRules0">Zasady</button>

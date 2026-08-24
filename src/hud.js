@@ -15,15 +15,16 @@ var HUD = (function () {
   function img(sym, px) { return '<img alt="' + SYMBOLS.NAMES_PL[sym][0] + '" src="' + spr(sym, px) + '">'; }
 
   /* ---------- obciążone kostki (tryb zaawansowany) ----------
-     Kalibracja z dev/bias-sim.mjs: % drapieżnika na górze przy ciężarku
-     KU jego ściance (RARE) i — z symetrii bryły — na ściance przeciwnej (OFTEN). */
-  var BIAS_MAX = 0.25;
-  var BIAS_RARE = [[0, 8.33], [0.05, 6.7], [0.10, 5.0], [0.15, 5.0], [0.20, 4.5], [0.25, 3.6]];
-  var BIAS_OFTEN = [[0, 8.33], [0.05, 11.0], [0.10, 14.7], [0.15, 15.9], [0.20, 19.8], [0.25, 23.4]];
+     Suwak = POŁOŻENIE środka ciężkości wzdłuż osi drapieżnik↔ścianka przeciwległa:
+     0 = środek kostki, +100% = na płaszczyźnie ścianki drapieżnika, −100% = przeciwnej.
+     Prawdopodobieństwa z kalibracji dev/bias-sim.mjs (RARE: ciężarek ku drapieżnikowi;
+     OFTEN — z symetrii środkowej bryły — ku przeciwnej). */
+  var BIAS_RARE = [[0, 8.33], [0.15, 4.6], [0.3, 4.3], [0.5, 2.2], [0.75, 1.5], [1, 1.3]];
+  var BIAS_OFTEN = [[0, 8.33], [0.15, 16.8], [0.3, 23.2], [0.5, 55.3], [0.75, 98.5], [1, 98.7]];
 
   function biasPct(e) {
     var t = e >= 0 ? BIAS_RARE : BIAS_OFTEN;
-    var x = Math.min(BIAS_MAX, Math.abs(e));
+    var x = Math.min(1, Math.abs(e));
     for (var i = 1; i < t.length; i++) {
       if (x <= t[i][0]) {
         var f = (x - t[i - 1][0]) / (t[i][0] - t[i - 1][0]);
@@ -33,13 +34,17 @@ var HUD = (function () {
     return t[t.length - 1][1];
   }
   function fmtPct(p) { return '~' + p.toFixed(1).replace('.', ',') + '%'; }
-  function sliderToE(v) { return -(v / 100) * BIAS_MAX; }
-  function eToSlider(e) { return Math.round(-(e / BIAS_MAX) * 100); }
+  function fmtPos(e) { var v = Math.round(e * 100); return (v > 0 ? '+' : '') + v + '%'; }
+  function sliderToE(v) { return v / 100; }
+  function eToSlider(e) { return Math.round(e * 100); }
   function currentBias() { return [sliderToE(+$('biasA').value), sliderToE(+$('biasB').value)]; }
   function refreshBiasUI() {
     var b = currentBias();
-    $('biasPctA').textContent = fmtPct(biasPct(b[0]));
-    $('biasPctB').textContent = fmtPct(biasPct(b[1]));
+    $('biasPctA').textContent = fmtPos(b[0]);
+    $('biasPctB').textContent = fmtPos(b[1]);
+    $('biasSubA').textContent = 'wilk wypada ' + fmtPct(biasPct(b[0]));
+    $('biasSubB').textContent = 'lis wypada ' + fmtPct(biasPct(b[1]));
+    if (cb.onBiasPreview) cb.onBiasPreview(b);
   }
   function biasMenuText(S) {
     var b = S && S.bias ? S.bias : [0, 0];
@@ -340,6 +345,7 @@ var HUD = (function () {
 
   /* ---------- start / wygrana ---------- */
   function showStart(o) {
+    $('startov').classList.remove('compact');
     $('btnResume').hidden = !o.canResume;
     if (o.canResume && o.resumeLabel) $('btnResume').textContent = o.resumeLabel;
     var nr0 = $('btnNetResume0');
@@ -359,7 +365,8 @@ var HUD = (function () {
     var nr = $('btnNetResume');
     nr.hidden = !o.netResume;
     if (o.netResume) nr.textContent = 'Wznów: ' + o.netResume;
-    if (o.names && !$('inpNetName').value) $('inpNetName').value = o.names[0] || '';
+    if (o.netName) $('inpNetName').value = o.netName;
+    else if (o.names && !$('inpNetName').value) $('inpNetName').value = o.names[0] || '';
     if (o.names) {
       $('inpName1').value = o.names[0] || '';
       $('inpName2').value = o.names[1] || '';
@@ -440,6 +447,7 @@ var HUD = (function () {
       AUDIO.ui();
       var p = $('advpanel');
       p.hidden = !p.hidden;
+      if (!p.hidden) refreshBiasUI();
     });
     $('biasA').addEventListener('input', refreshBiasUI);
     $('biasB').addEventListener('input', refreshBiasUI);
@@ -456,6 +464,7 @@ var HUD = (function () {
     });
     $('btnNet').addEventListener('click', function () {
       AUDIO.ui();
+      $('startov').classList.add('compact');
       $('modeButtons').hidden = true;
       $('netform').hidden = false;
       // Android zdradza typ łącza; iOS nie ma tego API (wtedy zostaje stała podpowiedź niżej)
@@ -465,6 +474,7 @@ var HUD = (function () {
     $('btnNetBack').addEventListener('click', function () {
       $('netform').hidden = true;
       $('modeButtons').hidden = false;
+      $('startov').classList.remove('compact');
     });
     $('btnNetResume').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
     $('btnNetResume0').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });

@@ -1,5 +1,5 @@
 // Superfarmer 3D — cache offline (network-first: online zawsze świeża wersja).
-const VER = 'sf3d-b61458ba33';
+const VER = 'sf3d-6fbda2ed1b';
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VER).then((c) => c.addAll(['./'])).then(() => self.skipWaiting()));
 });

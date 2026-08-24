@@ -592,6 +592,24 @@ button {
 
 /* gra przez sieć */
 .netconn { gap: 10px; }
+
+/* Widoki sieciowe: mały nagłówek i CAŁY overlay przewijalny (jeden kontekst
+   scrolla — zagnieżdżone przewijanie na iOS zawodzi, a treść z kamerą i polami
+   kodów bywa wyższa niż ekran telefonu). */
+.overlay.compact {
+  justify-content: flex-start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.overlay.compact::-webkit-scrollbar { width: 7px; }
+.overlay.compact::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
+.overlay.compact .eyebrow,
+.overlay.compact .tag,
+.overlay.compact .credits { display: none; }
+.overlay.compact h1 { font-size: 30px; margin: 2px 0 14px; flex: none; }
+.overlay.compact .modes { flex: none; }
 .netstatus { font-size: 14px; color: var(--cream-dim); line-height: 1.45; min-height: 20px; text-align: center; }
 .qrout {
   width: min(64vw, 240px);
@@ -671,7 +689,17 @@ button {
   margin-bottom: 10px;
   text-align: center;
 }
-.biasrow { margin-bottom: 12px; }
+.biasrow { margin-bottom: 12px; display: flex; gap: 10px; align-items: center; }
+.bprev {
+  width: 84px;
+  height: 84px;
+  flex: none;
+  border-radius: 12px;
+  background: rgba(255, 236, 200, 0.04);
+  border: 1px solid var(--line);
+}
+.biascol { flex: 1; min-width: 0; }
+.biassub { font-size: 11.5px; color: var(--cream-faint); margin-top: 1px; }
 .biashead {
   display: flex;
   justify-content: space-between;
@@ -954,16 +982,26 @@ button {
   <div id="advpanel" class="advpanel" hidden>
     <div class="advlabel">Środek ciężkości kostek</div>
     <div class="biasrow">
-      <div class="biashead"><span>Kostka jasna — wilk</span><b id="biasPctA">8,3%</b></div>
-      <input type="range" id="biasA" min="-100" max="100" step="5" value="0" aria-label="Obciążenie kostki jasnej">
-      <div class="biasends"><span>ciężarek przy wilku — rzadziej</span><span>naprzeciw — częściej</span></div>
+      <canvas id="bprevA" class="bprev" width="96" height="96"></canvas>
+      <div class="biascol">
+        <div class="biashead"><span>Kostka jasna — wilk</span><b id="biasPctA">0%</b></div>
+        <input type="range" id="biasA" min="-100" max="100" step="5" value="0" aria-label="Położenie środka ciężkości kostki jasnej">
+        <div class="biasends"><span>−100% naprzeciw</span><span>+100% przy wilku</span></div>
+        <div class="biassub" id="biasSubA">wilk wypada ~8,3%</div>
+      </div>
     </div>
     <div class="biasrow">
-      <div class="biashead"><span>Kostka złota — lis</span><b id="biasPctB">8,3%</b></div>
-      <input type="range" id="biasB" min="-100" max="100" step="5" value="0" aria-label="Obciążenie kostki złotej">
-      <div class="biasends"><span>ciężarek przy lisie — rzadziej</span><span>naprzeciw — częściej</span></div>
+      <canvas id="bprevB" class="bprev" width="96" height="96"></canvas>
+      <div class="biascol">
+        <div class="biashead"><span>Kostka złota — lis</span><b id="biasPctB">0%</b></div>
+        <input type="range" id="biasB" min="-100" max="100" step="5" value="0" aria-label="Położenie środka ciężkości kostki złotej">
+        <div class="biasends"><span>−100% naprzeciw</span><span>+100% przy lisie</span></div>
+        <div class="biassub" id="biasSubB">lis wypada ~8,3%</div>
+      </div>
     </div>
-    <div class="advnote">Fizycznie obciążone kostki: mosiężna kropka pokazuje ściankę z ciężarkiem. Suwak na środku = kostka uczciwa (każda ścianka 8,3%).</div>
+    <div class="advnote">Suwak = położenie środka ciężkości: 0 to środek kostki (uczciwa), +100% ciężarek
+      aż przy ściance drapieżnika (wypada rzadziej), −100% przy przeciwległej (częściej).
+      Mosiężna plomba na kostce pokazuje ciężarek i rośnie z jego siłą.</div>
   </div>
   <div class="linkrow">
     <button class="link" id="btnRules0">Zasady</button>
@@ -27273,21 +27311,26 @@ var NET = (function () {
     return out;
   }
 
-  function packSdp(sdp) {
+  /* kind: 'O' = oferta założyciela, 'A' = odpowiedź dołączającego — wpisany
+     w prefiks kodu, żeby pomyłkę (dwóch hostów, własny kod) wykryć PO POLSKU,
+     zanim WebRTC wypluje kryptyczny błąd. */
+  function packSdp(sdp, kind) {
     var bytes = new TextEncoder().encode(slimSdp(sdp));
+    var tag = (typeof CompressionStream === 'function' ? 'S1' : 'S0') + (kind || '') + '.';
     if (typeof CompressionStream !== 'function') {
-      return Promise.resolve('S0.' + b64url(bytes));
+      return Promise.resolve(tag + b64url(bytes));
     }
     var cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
     return new Response(cs).arrayBuffer().then(function (buf) {
-      return 'S1.' + b64url(new Uint8Array(buf));
+      return tag + b64url(new Uint8Array(buf));
     });
   }
 
   function unpackSdp(code) {
-    var m = String(code).trim().match(/^(S[01])\.([A-Za-z0-9_-]+)$/);
+    var m = String(code).trim().match(/^(S[01])([OA])?\.([A-Za-z0-9_-]+)$/);
     if (!m) return Promise.reject(new Error('To nie jest kod Superfarmera'));
-    var bytes = unb64url(m[2]);
+    var kind = m[2] || null;
+    var bytes = unb64url(m[3]);
     var p;
     if (m[1] === 'S1') {
       if (typeof DecompressionStream !== 'function') return Promise.reject(new Error('Przeglądarka nie obsługuje tego kodu'));
@@ -27297,7 +27340,7 @@ var NET = (function () {
       p = Promise.resolve(bytes);
     }
     return p.then(function (raw) {
-      return new TextDecoder().decode(raw).split('\n').join('\r\n') + '\r\n';
+      return { sdp: new TextDecoder().decode(raw).split('\n').join('\r\n') + '\r\n', kind: kind };
     });
   }
 
@@ -27363,8 +27406,10 @@ var NET = (function () {
           var img = cx.getImageData(0, 0, w, h);
           var res = null;
           try { res = jsQR(img.data, w, h, { inversionAttempts: 'dontInvert' }); } catch (e) {}
-          if (res && res.data && /^S[01]\./.test(res.data.trim())) {
+          if (res && res.data && /^S[01][OA]?\./.test(res.data.trim())) {
             var code = res.data.trim();
+            // odrzucony przed chwilą kod (np. własny/założyciela) — skanuj dalej
+            if (code === lastRejected && Date.now() - lastRejectedAt < 4000) return;
             stopScan();
             onCode(code);
           }
@@ -27452,13 +27497,16 @@ var NET = (function () {
     if (cb.onClose) cb.onClose();
   }
 
-  function armOpenTimeout() {
+  /* Licznik czasu TYLKO na automatyczną fazę łączenia (po wymianie kodów).
+     Na czekanie, aż drugi gracz przepisze/prześle kod, limitu NIE MA —
+     wymiana przez komunikator potrafi trwać minuty; od tego jest „anuluj”. */
+  function armOpenTimeout(ms) {
     clearTimeout(openTimer);
     openTimer = setTimeout(function () {
       if (dc && dc.readyState === 'open') return;
       if (ui) ui.status('Nie udało się połączyć — spróbujcie jeszcze raz (najpewniej: hotspot z telefonu)');
       fail();
-    }, 25000);
+    }, ms || 60000);
   }
 
   /** Start jako założyciel: tworzy ofertę → pokazuje kod → skanuje/przyjmuje odpowiedź. */
@@ -27475,12 +27523,11 @@ var NET = (function () {
         return pc.createOffer()
           .then(function (o) { return pc.setLocalDescription(o); })
           .then(gathered)
-          .then(function () { return packSdp(pc.localDescription.sdp); })
+          .then(function () { return packSdp(pc.localDescription.sdp, 'O'); })
           .then(function (code) {
             if (closed) return;
             ui.showMyCode(code);
             ui.status('Gracz 2 skanuje ten kod (u siebie: „Dołącz”), a Ty zeskanuj jego odpowiedź poniżej');
-            armOpenTimeout();
           });
       })
       .catch(function (e) { ui.status('Błąd: ' + (e && e.message || e)); fail(); });
@@ -27496,31 +27543,61 @@ var NET = (function () {
     startScan(ui.video, acceptPeerCode, function (msg) { ui.cameraFailed(msg); });
   }
 
+  var lastRejected = '', lastRejectedAt = 0;
+
+  function rescan() {
+    if (!ui || closed) return;
+    startScan(ui.video, acceptPeerCode, function (msg) { ui.cameraFailed(msg); });
+  }
+
+  function rejectCode(code, msg) {
+    lastRejected = code;
+    lastRejectedAt = Date.now();
+    if (ui) ui.status(msg);
+    rescan();
+  }
+
   /** Przyjmij kod od drugiej strony (ze skanera albo wklejony ręcznie). */
   function acceptPeerCode(code) {
     if (!pc || closed) return;
-    unpackSdp(code).then(function (sdp) {
-      if (pc.localDescription && pc.localDescription.type === 'offer') {
-        // jesteśmy hostem: to odpowiedź
-        ui.status('Łączę…');
-        return pc.setRemoteDescription({ type: 'answer', sdp: sdp });
+    code = String(code).trim();
+    unpackSdp(code).then(function (res) {
+      var isHost = !!(pc.localDescription && pc.localDescription.type === 'offer');
+      if (isHost && res.kind === 'O') {
+        rejectCode(code, 'To kod ZAŁOŻYCIELA gry (może Twój własny?). Drugi gracz nie zakłada swojej — on tapa „Dołącz”, skanuje kod z TWOJEGO ekranu, a Ty potem jego odpowiedź.');
+        return;
       }
-      // jesteśmy gościem: to oferta → tworzymy odpowiedź
+      if (!isHost && res.kind === 'A') {
+        rejectCode(code, 'To kod-ODPOWIEDŹ. Jako dołączający zeskanuj pierwszy kod — ten z ekranu założyciela.');
+        return;
+      }
+      if (isHost) {
+        // odpowiedź — od teraz łączenie jest automatyczne
+        ui.status('Łączę…');
+        armOpenTimeout(60000);
+        return pc.setRemoteDescription({ type: 'answer', sdp: res.sdp }).catch(function (e) {
+          clearTimeout(openTimer);
+          rejectCode(code, 'Nie udało się przyjąć odpowiedzi — zeskanuj ją jeszcze raz. (' + e.message + ')');
+        });
+      }
+      // jesteśmy gościem: oferta → tworzymy odpowiedź
       ui.status('Odpowiadam…');
-      return pc.setRemoteDescription({ type: 'offer', sdp: sdp })
+      return pc.setRemoteDescription({ type: 'offer', sdp: res.sdp })
         .then(function () { return pc.createAnswer(); })
         .then(function (a) { return pc.setLocalDescription(a); })
         .then(gathered)
-        .then(function () { return packSdp(pc.localDescription.sdp); })
+        .then(function () { return packSdp(pc.localDescription.sdp, 'A'); })
         .then(function (myCode) {
           if (closed) return;
           stopScan();
           ui.showMyCode(myCode);
-          ui.status('Pokaż ten kod założycielowi — po zeskanowaniu gra ruszy sama');
-          armOpenTimeout();
+          ui.status('Pokaż ten kod założycielowi (albo mu go wyślij) — po jego przyjęciu gra ruszy sama');
+        })
+        .catch(function (e) {
+          rejectCode(code, 'Nie udało się przyjąć kodu — zeskanuj jeszcze raz. (' + e.message + ')');
         });
     }).catch(function (e) {
-      ui.status('Zły kod: ' + e.message);
+      rejectCode(code, 'Zły kod: ' + e.message);
     });
   }
 
@@ -28152,14 +28229,18 @@ var DiceScene = (function () {
     d.body.sleepSpeedLimit = U * 0.28;
     d.plugs[0].visible = e > 0.004;
     d.plugs[1].visible = e < -0.004;
+    var ps = 0.7 + 1.9 * Math.min(1, Math.abs(e)); // plomba rośnie z ciężarem
+    d.plugs[0].scale.setScalar(ps);
+    d.plugs[1].scale.setScalar(ps);
   };
 
-  /** Obciążenie [eA, eB] w ułamkach U (±0.25). Stosować między rzutami. */
+  /** Obciążenie [eA, eB] w ułamkach U: ±1 = środek masy aż na płaszczyźnie ścianki.
+      Stosować między rzutami. */
   P.setBias = function (arr) {
     var a = arr && arr.length === 2 ? arr : [0, 0];
     this.bias = [
-      Math.max(-0.25, Math.min(0.25, +a[0] || 0)),
-      Math.max(-0.25, Math.min(0.25, +a[1] || 0))
+      Math.max(-1, Math.min(1, +a[0] || 0)),
+      Math.max(-1, Math.min(1, +a[1] || 0))
     ];
     for (var i = 0; i < 2; i++) {
       this._unlockDie(i);
@@ -28234,6 +28315,57 @@ var DiceScene = (function () {
     }
     this.remote = false;
     this._lastNet = null;
+  };
+
+  /* ---------- podgląd 3D kostek w panelu zaawansowanym ----------
+     Małe sceny z prawdziwą geometrią/materiałem kostek; plomba pokazuje stronę
+     i siłę ciężarka. Renderowane tylko przy zmianie suwaka. */
+  P.previewBias = function (cvA, cvB, biasArr) {
+    if (!this._prev) {
+      this._prev = [];
+      for (var i = 0; i < 2; i++) {
+        var cv = i === 0 ? cvA : cvB;
+        var r = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
+        r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+        r.setSize(96, 96, false);
+        r.outputColorSpace = THREE.SRGBColorSpace;
+        r.toneMapping = THREE.ACESFilmicToneMapping;
+        var sc = new THREE.Scene();
+        sc.environment = this.scene.environment; // mosiądz plomby potrzebuje odbić
+        sc.add(new THREE.HemisphereLight('#ffeccb', '#3a2c1c', 1.0));
+        var dl = new THREE.DirectionalLight('#ffe6bd', 2.2);
+        dl.position.set(-2, 3, 4);
+        sc.add(dl);
+        var cam = new THREE.PerspectiveCamera(30, 1, 0.1, 20);
+        cam.position.set(0, 0.7, 4.6);
+        cam.lookAt(0, 0, 0);
+        var die = this.dice[i];
+        var mesh = new THREE.Mesh(die.mesh.geometry, die.mesh.material);
+        var plugs = [this._makePlug(die.predFace), this._makePlug(die.antiFace)];
+        mesh.add(plugs[0]);
+        mesh.add(plugs[1]);
+        sc.add(mesh);
+        this._prev.push({ r: r, sc: sc, cam: cam, plugs: plugs, mesh: mesh, n: this.dod.normals[die.predFace] });
+      }
+    }
+    for (var j = 0; j < 2; j++) {
+      var e = (biasArr && biasArr[j]) || 0;
+      var pv = this._prev[j];
+      pv.plugs[0].visible = e > 0.02;
+      pv.plugs[1].visible = e < -0.02;
+      var s = 0.7 + 1.9 * Math.min(1, Math.abs(e));
+      pv.plugs[0].scale.setScalar(s);
+      pv.plugs[1].scale.setScalar(s);
+      // obciążona ścianka zawsze widoczna, po stronie zgodnej z suwakiem:
+      // plus → drapieżnik w prawo-przód; minus → przeciwległa w lewo-przód
+      var neg = e < -0.02;
+      var from = neg
+        ? new THREE.Vector3(-pv.n[0], -pv.n[1], -pv.n[2])
+        : new THREE.Vector3(pv.n[0], pv.n[1], pv.n[2]);
+      var to = new THREE.Vector3(neg ? -0.72 : 0.72, 0.22, 0.66).normalize();
+      pv.mesh.quaternion.setFromUnitVectors(from, to);
+      pv.r.render(pv.sc, pv.cam);
+    }
   };
 
   P._resizeDice = function () {
@@ -28331,7 +28463,11 @@ var DiceScene = (function () {
       if (!d.thrown || d.locked) continue;
       var b = d.body;
       if (b.sleepState !== CANNON.Body.SLEEPING) continue;
-      if (b.position.y > this.U * 1.35) continue;   // leży na filcu, nie na drugiej kostce
+      // wysokość GEOMETRYCZNEGO środka bryły (origin ciała = środek masy, przy
+      // obciążeniu przesunięty nawet o cały U) — leży na filcu, nie na drugiej kostce
+      var gy = b.position.y + this._tmpV.set(d.shapeOff.x, d.shapeOff.y, d.shapeOff.z)
+        .applyQuaternion(d.mesh.quaternion).y;
+      if (gy > this.U * 1.35) continue;
       if (this._faceUp(d).dot < 0.99999) continue;  // przekrzywiona zostaje żywa
       this._lockDie(i);
     }
@@ -28763,15 +28899,16 @@ var HUD = (function () {
   function img(sym, px) { return '<img alt="' + SYMBOLS.NAMES_PL[sym][0] + '" src="' + spr(sym, px) + '">'; }
 
   /* ---------- obciążone kostki (tryb zaawansowany) ----------
-     Kalibracja z dev/bias-sim.mjs: % drapieżnika na górze przy ciężarku
-     KU jego ściance (RARE) i — z symetrii bryły — na ściance przeciwnej (OFTEN). */
-  var BIAS_MAX = 0.25;
-  var BIAS_RARE = [[0, 8.33], [0.05, 6.7], [0.10, 5.0], [0.15, 5.0], [0.20, 4.5], [0.25, 3.6]];
-  var BIAS_OFTEN = [[0, 8.33], [0.05, 11.0], [0.10, 14.7], [0.15, 15.9], [0.20, 19.8], [0.25, 23.4]];
+     Suwak = POŁOŻENIE środka ciężkości wzdłuż osi drapieżnik↔ścianka przeciwległa:
+     0 = środek kostki, +100% = na płaszczyźnie ścianki drapieżnika, −100% = przeciwnej.
+     Prawdopodobieństwa z kalibracji dev/bias-sim.mjs (RARE: ciężarek ku drapieżnikowi;
+     OFTEN — z symetrii środkowej bryły — ku przeciwnej). */
+  var BIAS_RARE = [[0, 8.33], [0.15, 4.6], [0.3, 4.3], [0.5, 2.2], [0.75, 1.5], [1, 1.3]];
+  var BIAS_OFTEN = [[0, 8.33], [0.15, 16.8], [0.3, 23.2], [0.5, 55.3], [0.75, 98.5], [1, 98.7]];
 
   function biasPct(e) {
     var t = e >= 0 ? BIAS_RARE : BIAS_OFTEN;
-    var x = Math.min(BIAS_MAX, Math.abs(e));
+    var x = Math.min(1, Math.abs(e));
     for (var i = 1; i < t.length; i++) {
       if (x <= t[i][0]) {
         var f = (x - t[i - 1][0]) / (t[i][0] - t[i - 1][0]);
@@ -28781,13 +28918,17 @@ var HUD = (function () {
     return t[t.length - 1][1];
   }
   function fmtPct(p) { return '~' + p.toFixed(1).replace('.', ',') + '%'; }
-  function sliderToE(v) { return -(v / 100) * BIAS_MAX; }
-  function eToSlider(e) { return Math.round(-(e / BIAS_MAX) * 100); }
+  function fmtPos(e) { var v = Math.round(e * 100); return (v > 0 ? '+' : '') + v + '%'; }
+  function sliderToE(v) { return v / 100; }
+  function eToSlider(e) { return Math.round(e * 100); }
   function currentBias() { return [sliderToE(+$('biasA').value), sliderToE(+$('biasB').value)]; }
   function refreshBiasUI() {
     var b = currentBias();
-    $('biasPctA').textContent = fmtPct(biasPct(b[0]));
-    $('biasPctB').textContent = fmtPct(biasPct(b[1]));
+    $('biasPctA').textContent = fmtPos(b[0]);
+    $('biasPctB').textContent = fmtPos(b[1]);
+    $('biasSubA').textContent = 'wilk wypada ' + fmtPct(biasPct(b[0]));
+    $('biasSubB').textContent = 'lis wypada ' + fmtPct(biasPct(b[1]));
+    if (cb.onBiasPreview) cb.onBiasPreview(b);
   }
   function biasMenuText(S) {
     var b = S && S.bias ? S.bias : [0, 0];
@@ -29088,6 +29229,7 @@ var HUD = (function () {
 
   /* ---------- start / wygrana ---------- */
   function showStart(o) {
+    $('startov').classList.remove('compact');
     $('btnResume').hidden = !o.canResume;
     if (o.canResume && o.resumeLabel) $('btnResume').textContent = o.resumeLabel;
     var nr0 = $('btnNetResume0');
@@ -29107,7 +29249,8 @@ var HUD = (function () {
     var nr = $('btnNetResume');
     nr.hidden = !o.netResume;
     if (o.netResume) nr.textContent = 'Wznów: ' + o.netResume;
-    if (o.names && !$('inpNetName').value) $('inpNetName').value = o.names[0] || '';
+    if (o.netName) $('inpNetName').value = o.netName;
+    else if (o.names && !$('inpNetName').value) $('inpNetName').value = o.names[0] || '';
     if (o.names) {
       $('inpName1').value = o.names[0] || '';
       $('inpName2').value = o.names[1] || '';
@@ -29188,6 +29331,7 @@ var HUD = (function () {
       AUDIO.ui();
       var p = $('advpanel');
       p.hidden = !p.hidden;
+      if (!p.hidden) refreshBiasUI();
     });
     $('biasA').addEventListener('input', refreshBiasUI);
     $('biasB').addEventListener('input', refreshBiasUI);
@@ -29204,6 +29348,7 @@ var HUD = (function () {
     });
     $('btnNet').addEventListener('click', function () {
       AUDIO.ui();
+      $('startov').classList.add('compact');
       $('modeButtons').hidden = true;
       $('netform').hidden = false;
       // Android zdradza typ łącza; iOS nie ma tego API (wtedy zostaje stała podpowiedź niżej)
@@ -29213,6 +29358,7 @@ var HUD = (function () {
     $('btnNetBack').addEventListener('click', function () {
       $('netform').hidden = true;
       $('modeButtons').hidden = false;
+      $('startov').classList.remove('compact');
     });
     $('btnNetResume').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
     $('btnNetResume0').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
@@ -29308,6 +29454,7 @@ var HUD = (function () {
   var LS_SOUND = 'sf3d.sound';
   var LS_TUT = 'sf3d.tutorial';
   var LS_NAMES = 'sf3d.names';
+  var LS_NETNAME = 'sf3d.netname';
   var LS_NETSAVE = 'sf3d.netsave.v1';
 
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -29601,6 +29748,7 @@ var HUD = (function () {
   function netConnectFlow(role, name, bias, wantResume) {
     netName = name || (role === 'host' ? 'Gracz 1' : 'Gracz 2');
     var netBias = bias && bias.length === 2 ? bias : [0, 0];
+    $id('startov').classList.add('compact');
     $id('modeButtons').hidden = true;
     $id('netform').hidden = true;
     $id('netconn').hidden = false;
@@ -29861,7 +30009,7 @@ var HUD = (function () {
     HUD.hideWin();
     HUD.closeSheets();
     dice.setInteractive(false);
-    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), netName: lsGet(LS_NETNAME) || '', bias: [0, 0], netResume: netResumeLabel() });
   }
 
   function storedNames() {
@@ -30008,9 +30156,22 @@ var HUD = (function () {
         if (isNet()) { clearNetSave(); NET.send({ t: 'bye' }); netEnd(null); return; }
         backToMenu();
       },
-      onNetHost: function (name, bias) { AUDIO.unlock(); netConnectFlow('host', name, bias); },
+      onBiasPreview: function (bias) {
+        if (dice && dice.previewBias) {
+          try { dice.previewBias($id('bprevA'), $id('bprevB'), bias); } catch (e) {}
+        }
+      },
+      onNetHost: function (name, bias) {
+        AUDIO.unlock();
+        if (name) lsSet(LS_NETNAME, name);
+        netConnectFlow('host', name, bias);
+      },
       onNetResume: function () { AUDIO.unlock(); netConnectFlow('host', null, null, true); },
-      onNetJoin: function (name) { AUDIO.unlock(); netConnectFlow('guest', name, null); },
+      onNetJoin: function (name) {
+        AUDIO.unlock();
+        if (name) lsSet(LS_NETNAME, name);
+        netConnectFlow('guest', name, null);
+      },
       onNetCancel: function () { netCancel(); }
     });
 
@@ -30027,7 +30188,7 @@ var HUD = (function () {
     }, { passive: false });
 
     syncInsets();
-    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), bias: [0, 0], netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), netName: lsGet(LS_NETNAME) || '', bias: [0, 0], netResume: netResumeLabel() });
     // uchwyt diagnostyczny (devtools)
     window.__SF = { dice: dice, get state() { return S; } };
   }

@@ -577,6 +577,24 @@ button {
 
 /* gra przez sieć */
 .netconn { gap: 10px; }
+
+/* Widoki sieciowe: mały nagłówek i CAŁY overlay przewijalny (jeden kontekst
+   scrolla — zagnieżdżone przewijanie na iOS zawodzi, a treść z kamerą i polami
+   kodów bywa wyższa niż ekran telefonu). */
+.overlay.compact {
+  justify-content: flex-start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.overlay.compact::-webkit-scrollbar { width: 7px; }
+.overlay.compact::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
+.overlay.compact .eyebrow,
+.overlay.compact .tag,
+.overlay.compact .credits { display: none; }
+.overlay.compact h1 { font-size: 30px; margin: 2px 0 14px; flex: none; }
+.overlay.compact .modes { flex: none; }
 .netstatus { font-size: 14px; color: var(--cream-dim); line-height: 1.45; min-height: 20px; text-align: center; }
 .qrout {
   width: min(64vw, 240px);
@@ -656,7 +674,17 @@ button {
   margin-bottom: 10px;
   text-align: center;
 }
-.biasrow { margin-bottom: 12px; }
+.biasrow { margin-bottom: 12px; display: flex; gap: 10px; align-items: center; }
+.bprev {
+  width: 84px;
+  height: 84px;
+  flex: none;
+  border-radius: 12px;
+  background: rgba(255, 236, 200, 0.04);
+  border: 1px solid var(--line);
+}
+.biascol { flex: 1; min-width: 0; }
+.biassub { font-size: 11.5px; color: var(--cream-faint); margin-top: 1px; }
 .biashead {
   display: flex;
   justify-content: space-between;
