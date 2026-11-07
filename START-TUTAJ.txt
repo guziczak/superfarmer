@@ -1,0 +1,22 @@
+SUPERFARMER — NOWA ODSŁONA
+
+1. Sklonuj repozytorium https://github.com/guziczak/superfarmer lub pobierz je
+   przez Code → Download ZIP i rozpakuj. Jeśli masz gotową paczkę ZIP z grą,
+   rozpakuj cały jej folder.
+2. Otwórz index.html w aktualnej przeglądarce.
+3. Wybierz grę z Zenkiem lub grę we dwoje na jednym urządzeniu.
+
+Gotowy HTML nie wymaga instalacji ani budowania.
+Jeżeli przeglądarka nie obsługuje WebGL, gra przełącza się na widok 2D
+z tym samym silnikiem fizycznym.
+
+Na telefonie lub dla gry na dwóch urządzeniach najlepiej użyć serwera
+lub hostingu HTTPS. Skaner QR wymaga HTTPS lub localhost; oba telefony muszą mieć
+tę samą nową wersję gry i być w jednej sieci Wi-Fi/hotspotu.
+
+Dla developerów: Node.js 22+, potem npm run dev / npm test / npm run build.
+Zależności są już dołączone — npm install nie jest potrzebne.
+
+README.md zawiera opis zmian, wyniki testów i zakres weryfikacji.
+
+Publikację gry na hostingu konfiguruje się osobno.

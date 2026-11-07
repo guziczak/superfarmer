@@ -10,6 +10,40 @@ var HUD = (function () {
   var bannerTimer = null;
   var labelTimer = null;
   var sheetOpen = null;
+  var sheetTrigger = null;
+  var eventGeneration = 0;
+  var gainsTimer = null;
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var installPrompt = null;
+  var sheetIds = ['sheetEx', 'sheetRules', 'sheetMenu', 'sheetLog'];
+
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function syncFocusLayers() {
+    var start = $('startov'), win = $('winov');
+    var startOn = start.classList.contains('show'), winOn = win.classList.contains('show');
+    start.inert = !!sheetOpen || !startOn;
+    win.inert = !!sheetOpen || !winOn;
+    $('hud').inert = !!sheetOpen || startOn || winOn;
+    start.setAttribute('aria-hidden', String(!startOn));
+    win.setAttribute('aria-hidden', String(!winOn));
+  }
+
+  function resetTransient() {
+    eventGeneration++;
+    clearTimeout(bannerTimer); clearTimeout(labelTimer); clearTimeout(gainsTimer);
+    ['banner', 'dl0', 'dl1', 'swipehint', 'eventbig'].forEach(function (id) { $(id).classList.remove('show'); });
+    $('gains').textContent = '';
+    $('flash').className = '';
+    cancelAnimationFrame(confettiRAF);
+    var canvas = $('confetti');
+    var context = canvas.getContext('2d');
+    if (context) context.clearRect(0, 0, canvas.width, canvas.height);
+  }
 
   function spr(sym, px) { return SYMBOLS.sprite(sym, px || 26); }
   function img(sym, px) { return '<img alt="' + SYMBOLS.NAMES_PL[sym][0] + '" src="' + spr(sym, px) + '">'; }
@@ -56,7 +90,11 @@ var HUD = (function () {
   function setBiasMode(m) {
     BMODE = m === 's' ? 's' : 'w';
     var rows = $('segMode').querySelectorAll('button');
-    for (var i = 0; i < rows.length; i++) rows[i].classList.toggle('on', rows[i].getAttribute('data-m') === BMODE);
+    for (var i = 0; i < rows.length; i++) {
+      var selected = rows[i].getAttribute('data-m') === BMODE;
+      rows[i].classList.toggle('on', selected);
+      rows[i].setAttribute('aria-pressed', String(selected));
+    }
     refreshBiasUI();
   }
   function biasMenuText(S) {
@@ -71,33 +109,47 @@ var HUD = (function () {
 
   /* ---------- karty graczy ---------- */
   function buildCards(S) {
+    resetTransient();
     var tb = $('topbar');
     tb.innerHTML = '';
+    var round = document.createElement('div');
+    round.id = 'roundbadge';
+    round.className = 'roundbadge';
+    tb.appendChild(round);
+    logItems = [];
     for (var i = 0; i < S.players.length; i++) {
       var p = S.players[i];
       var card = document.createElement('div');
       card.className = 'pcard p' + i;
       card.id = 'pcard' + i;
+      card.setAttribute('role', 'group');
       var chips = '';
       for (var a = 0; a < RULES.ANIMALS.length; a++) {
         var an = RULES.ANIMALS[a];
         chips += '<div class="chip" data-a="' + an + '">' + img(an, 26) + '<div class="cnt">0</div></div>';
       }
       card.innerHTML =
-        '<div class="prow"><div class="pdot"></div><div class="pname">' + p.name + '</div></div>' +
-        '<div class="chips">' + chips + '</div>';
+        '<div class="prow"><div class="pdot" aria-hidden="true"></div><div class="pname"></div></div>' +
+        '<div class="chips">' + chips + '</div>' +
+        '<div class="pgoal"><span class="goal-count"></span><span class="goal-track" aria-hidden="true"><span class="goal-fill"></span></span></div>';
+      card.querySelector('.pname').textContent = p.name;
       tb.appendChild(card);
     }
   }
 
   function refresh(S, fx) {
     var tb = $('topbar');
+    if ($('roundbadge')) $('roundbadge').textContent = 'Runda ' + S.turnCount + ' · ' + (S.mode === 'solo' ? 'Ty i Zenek' : S.mode === 'net' ? 'Wspólna gra' : 'Przy jednym stole');
     tb.classList.toggle('lead0', S.cur === 0);
     tb.classList.toggle('lead1', S.cur === 1);
     for (var i = 0; i < S.players.length; i++) {
       var p = S.players[i];
       var card = $('pcard' + i);
       if (!card) continue;
+      var complete = RULES.WIN_ANIMALS.filter(function (animal) { return p.herd[animal] > 0; }).length;
+      card.querySelector('.goal-count').textContent = complete + ' z 5 gatunków';
+      card.querySelector('.goal-fill').style.width = (complete * 20) + '%';
+      card.setAttribute('aria-label', p.name + ', ' + complete + ' z 5 gatunków do wygranej' + (S.cur === i ? ', teraz gra' : ''));
       card.classList.toggle('active', S.cur === i && S.phase !== 'gameover');
       var chips = card.querySelectorAll('.chip');
       for (var c = 0; c < chips.length; c++) {
@@ -121,6 +173,7 @@ var HUD = (function () {
   /* ---------- dok ---------- */
   function setDock(mode, o) {
     o = o || {};
+    document.documentElement.dataset.phase = mode;
     var ex = $('btnExchange'), roll = $('btnRoll'), hint = $('hintline');
     var show = function (el, on) { el.style.display = on ? '' : 'none'; };
     show(ex, false); show(roll, false);
@@ -186,14 +239,16 @@ var HUD = (function () {
 
   function eventBig(o, ms) {
     return new Promise(function (res) {
+      var generation = ++eventGeneration;
       var e = $('eventbig');
       e.innerHTML = (o.icon ? '<img src="' + spr(o.icon, 84) + '" alt="">' : '') +
-        '<div class="t1 display">' + o.t1 + '</div>' +
-        (o.t2 ? '<div class="t2">' + o.t2 + '</div>' : '');
+        '<div class="t1 display">' + esc(o.t1) + '</div>' +
+        (o.t2 ? '<div class="t2">' + esc(o.t2) + '</div>' : '');
       e.className = o.cls || '';
       void e.offsetWidth;
       e.classList.add('show');
       setTimeout(function () {
+        if (generation !== eventGeneration) { res(); return; }
         e.classList.remove('show');
         setTimeout(res, 240);
       }, ms || 1700);
@@ -201,6 +256,7 @@ var HUD = (function () {
   }
 
   function gains(list, ms) {
+    clearTimeout(gainsTimer);
     var g = $('gains');
     g.innerHTML = '';
     list.forEach(function (it) {
@@ -209,7 +265,7 @@ var HUD = (function () {
       d.innerHTML = img(it.sym, 27) + '<span>' + (it.n > 0 ? '+' : '') + it.n + '</span>';
       g.appendChild(d);
     });
-    setTimeout(function () { g.innerHTML = ''; }, ms || 1600);
+    gainsTimer = setTimeout(function () { g.innerHTML = ''; }, ms || 1600);
   }
 
   /* ---------- feed / log ---------- */
@@ -217,31 +273,46 @@ var HUD = (function () {
     logItems.push(entry);
     if (logItems.length > 60) logItems.shift();
     var f = $('feed');
-    f.innerHTML = (entry.icon ? img(entry.icon, 20) : '') + '<span>' + entry.text + '</span>';
+    f.innerHTML = (entry.icon ? img(entry.icon, 20) : '') + '<span></span>';
+    f.querySelector('span').textContent = entry.text;
   }
 
   function renderLog() {
     var el = $('logContent');
     if (!logItems.length) { el.innerHTML = '<p style="color:var(--cream-faint);font-size:14px;padding:8px">Jeszcze nic się nie wydarzyło.</p>'; return; }
     el.innerHTML = logItems.slice().reverse().map(function (e) {
-      return '<div class="logrow"><span class="who p' + e.who + '">' + e.whoName + '</span>' +
-        (e.icon ? img(e.icon, 18) : '') + '<span>' + e.text + '</span></div>';
+      return '<div class="logrow"><span class="who p' + (e.who === 1 ? 1 : 0) + '">' + esc(e.whoName) + '</span>' +
+        (e.icon ? img(e.icon, 18) : '') + '<span>' + esc(e.text) + '</span></div>';
     }).join('');
   }
 
   /* ---------- arkusze ---------- */
   function openSheet(name) {
+    if (sheetIds.indexOf(name) < 0) return;
+    if (!sheetOpen) sheetTrigger = document.activeElement;
     closeSheets(true);
     sheetOpen = name;
     $('backdrop').classList.add('show');
     $(name).classList.add('show');
+    $(name).inert = false;
+    $(name).setAttribute('aria-hidden', 'false');
+    syncFocusLayers();
+    var target = $(name).querySelector('.sheet-close') || $(name);
+    target.focus({ preventScroll: true });
   }
   function closeSheets(keepBackdrop) {
-    ['sheetEx', 'sheetRules', 'sheetMenu', 'sheetLog'].forEach(function (id) {
+    sheetIds.forEach(function (id) {
       $(id).classList.remove('show');
+      $(id).inert = true;
+      $(id).setAttribute('aria-hidden', 'true');
     });
     if (!keepBackdrop) $('backdrop').classList.remove('show');
     sheetOpen = null;
+    if (!keepBackdrop) {
+      syncFocusLayers();
+      if (sheetTrigger && sheetTrigger.isConnected && sheetTrigger.getClientRects().length) sheetTrigger.focus({ preventScroll: true });
+      sheetTrigger = null;
+    }
   }
 
   /* ---------- wymiana ---------- */
@@ -292,9 +363,9 @@ var HUD = (function () {
     var st = document.createElement('div');
     st.className = 'exstep';
     st.innerHTML =
-      '<button class="stepbtn" data-k="-">−</button>' +
+      '<button class="stepbtn" data-k="-" aria-label="Zmniejsz liczbę wymian">−</button>' +
       '<div class="val"></div>' +
-      '<button class="stepbtn" data-k="+">+</button>' +
+      '<button class="stepbtn" data-k="+" aria-label="Zwiększ liczbę wymian">+</button>' +
       '<button class="btn pri go">Wymień</button>';
     row.after(st);
     var giveN = dir > 0 ? rate.giveN : rate.getN;
@@ -312,7 +383,7 @@ var HUD = (function () {
       cb.onExchangeApply(rate, dir, val, giveS, getS);
     });
     upd();
-    st.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    st.scrollIntoView({ block: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' });
   }
 
   /* ---------- zasady ---------- */
@@ -350,6 +421,8 @@ var HUD = (function () {
       '<button class="menurow" id="mRules"><span>Zasady gry</span><span class="state">›</span></button>' +
       '<button class="menurow" id="mLog"><span>Historia gry</span><span class="state">›</span></button>' +
       '<div class="menurow static"><span>Kostki</span><span class="state">' + biasMenuText(S) + '</span></div>' +
+      '<button class="menurow" id="mInstall"' + (installPrompt ? '' : ' hidden') + '><span>Dodaj grę do urządzenia</span><span class="state">↗</span></button>' +
+      '<button class="menurow" id="mBack"><span>' + (S && S.mode === 'net' ? 'Opuść grę' : 'Zapisz i wróć do menu') + '</span><span class="state">↗</span></button>' +
       '<button class="menurow" id="mRestart"><span>Nowa gra</span><span class="state">od początku</span></button>';
     $('mSound').addEventListener('click', function () {
       cb.onSoundToggle();
@@ -357,11 +430,29 @@ var HUD = (function () {
     });
     $('mRules').addEventListener('click', function () { openSheet('sheetRules'); });
     $('mLog').addEventListener('click', function () { renderLog(); openSheet('sheetLog'); });
-    $('mRestart').addEventListener('click', function () { closeSheets(); cb.onRestart(); });
+    $('mBack').addEventListener('click', function () { closeSheets(); cb.onBackToMenu(); });
+    $('mInstall').addEventListener('click', function () {
+      if (!installPrompt) return;
+      var prompt = installPrompt;
+      prompt.prompt().then(function () { return prompt.userChoice; }).then(function () {
+        installPrompt = null;
+        if ($('mInstall')) $('mInstall').hidden = true;
+      }).catch(function () {});
+    });
+    $('mRestart').addEventListener('click', function () {
+      if (!this.dataset.confirm) {
+        this.dataset.confirm = '1';
+        this.querySelector('span').textContent = 'Zacząć od nowa?';
+        this.querySelector('.state').textContent = 'Kliknij, aby potwierdzić';
+        return;
+      }
+      closeSheets(); cb.onRestart();
+    });
   }
 
   /* ---------- start / wygrana ---------- */
   function showStart(o) {
+    resetTransient();
     $('startov').classList.remove('compact');
     $('btnResume').hidden = !o.canResume;
     if (o.canResume && o.resumeLabel) $('btnResume').textContent = o.resumeLabel;
@@ -373,6 +464,8 @@ var HUD = (function () {
     setBiasMode('w');
     $('advpanel').hidden = true;
     $('btnSound0').textContent = AUDIO.isEnabled() ? 'Dźwięk: wł.' : 'Dźwięk: wył.';
+    $('btnSound0').setAttribute('aria-pressed', String(AUDIO.isEnabled()));
+    $('btnAdv').setAttribute('aria-expanded', 'false');
     $('modeButtons').hidden = false;
     $('nameform').hidden = true;
     $('netform').hidden = true;
@@ -388,8 +481,9 @@ var HUD = (function () {
       $('inpName2').value = o.names[1] || '';
     }
     $('startov').classList.add('show');
+    syncFocusLayers();
   }
-  function hideStart() { $('startov').classList.remove('show'); }
+  function hideStart() { $('startov').classList.remove('show'); syncFocusLayers(); }
 
   function showWin(o) {
     $('winEyebrow').textContent = o.eyebrow;
@@ -399,8 +493,22 @@ var HUD = (function () {
       return '<div class="stat"><div class="v">' + s.v + '</div><div class="l">' + s.l + '</div></div>';
     }).join('');
     $('winov').classList.add('show');
+    syncFocusLayers();
+    $('btnAgain').focus({ preventScroll: true });
   }
-  function hideWin() { $('winov').classList.remove('show'); }
+  function hideWin() { $('winov').classList.remove('show'); syncFocusLayers(); }
+
+  function compatibilityMode(on) {
+    var note = $('compatNote');
+    if (!note) {
+      note = document.createElement('div');
+      note.id = 'compatNote'; note.className = 'compat-note';
+      note.textContent = 'Widok 2D · pełna fizyka';
+      note.title = 'Ta przeglądarka korzysta z widoku zgodności. Zasady i fizyka kostek pozostają takie same.';
+      $('hud').appendChild(note);
+    }
+    note.hidden = !on;
+  }
 
   /* ---------- konfetti z sylwetek ---------- */
   var confettiRAF = null;
@@ -454,6 +562,38 @@ var HUD = (function () {
   function init(callbacks) {
     cb = callbacks;
     buildRules();
+    window.addEventListener('beforeinstallprompt', function (event) {
+      event.preventDefault(); installPrompt = event;
+      if ($('mInstall')) $('mInstall').hidden = false;
+    });
+    window.addEventListener('appinstalled', function () {
+      installPrompt = null;
+      if ($('mInstall')) $('mInstall').hidden = true;
+    });
+    $('hintline').setAttribute('role', 'status');
+    $('hintline').setAttribute('aria-live', 'polite');
+    $('eventbig').setAttribute('role', 'status');
+    $('eventbig').setAttribute('aria-live', 'polite');
+    $('banner').setAttribute('aria-live', 'polite');
+    sheetIds.forEach(function (id) {
+      $(id).inert = true;
+      $(id).setAttribute('aria-hidden', 'true');
+      $(id).setAttribute('aria-modal', 'true');
+      $(id).setAttribute('tabindex', '-1');
+    });
+    document.querySelectorAll('[data-close-sheet]').forEach(function (button) {
+      button.addEventListener('click', function () { closeSheets(); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (!sheetOpen) return;
+      if (e.key === 'Escape') { e.preventDefault(); closeSheets(); return; }
+      if (e.key !== 'Tab') return;
+      var nodes = Array.prototype.filter.call($(sheetOpen).querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]'), function (el) { return el.getClientRects().length; });
+      if (!nodes.length) { e.preventDefault(); $(sheetOpen).focus(); return; }
+      var first = nodes[0], last = nodes[nodes.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === $(sheetOpen))) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
     $('btnRoll').addEventListener('click', function () { cb.onRollClick(); });
     $('btnExchange').addEventListener('click', function () { cb.onExchangeOpen(); });
     $('btnMenu').addEventListener('click', function () { cb.onMenuOpen(); });
@@ -463,6 +603,7 @@ var HUD = (function () {
       AUDIO.ui();
       var p = $('advpanel');
       p.hidden = !p.hidden;
+      $('btnAdv').setAttribute('aria-expanded', String(!p.hidden));
       if (!p.hidden) refreshBiasUI();
     });
     $('biasA').addEventListener('input', refreshBiasUI);
@@ -505,6 +646,10 @@ var HUD = (function () {
     $('btnNetCancel').addEventListener('click', function () { AUDIO.ui(); cb.onNetCancel(); });
     $('qrOut').addEventListener('click', function () {
       $('qrOut').classList.toggle('big');
+      $('qrOut').setAttribute('aria-expanded', String($('qrOut').classList.contains('big')));
+    });
+    $('qrOut').addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('qrOut').click(); }
     });
     $('btnNetPaste').addEventListener('click', function () {
       AUDIO.ui();
@@ -513,9 +658,20 @@ var HUD = (function () {
     $('btnPasteGo').addEventListener('click', function () { AUDIO.ui(); NET.acceptPeerCode($('pasteIn').value); });
     $('btnCopyCode').addEventListener('click', function () {
       var el = $('myCode');
+      var button = $('btnCopyCode');
       el.focus();
       el.select();
-      try { navigator.clipboard.writeText(el.value); } catch (e) { try { document.execCommand('copy'); } catch (e2) {} }
+      var fallback = function () {
+        try { if (document.execCommand('copy')) return Promise.resolve(); } catch (e) {}
+        return Promise.reject(new Error('copy'));
+      };
+      var copy;
+      try { copy = navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(el.value).catch(fallback) : fallback(); }
+      catch (e) { copy = fallback(); }
+      copy.then(function () {
+        button.textContent = 'Skopiowano ✓';
+        setTimeout(function () { button.textContent = 'Kopiuj mój kod'; }, 1800);
+      }).catch(function () { $('netStatus').textContent = 'Kod zaznaczony — skopiuj go ręcznie.'; });
       AUDIO.ui();
     });
     var duoGo = function () {
@@ -529,6 +685,7 @@ var HUD = (function () {
     $('btnSound0').addEventListener('click', function () {
       cb.onSoundToggle();
       $('btnSound0').textContent = AUDIO.isEnabled() ? 'Dźwięk: wł.' : 'Dźwięk: wył.';
+      $('btnSound0').setAttribute('aria-pressed', String(AUDIO.isEnabled()));
     });
     $('btnAgain').addEventListener('click', function () { cb.onAgain(); });
     $('btnMenuBack').addEventListener('click', function () { cb.onBackToMenu(); });
@@ -576,6 +733,7 @@ var HUD = (function () {
     confetti: confetti,
     swipeHint: swipeHint,
     netDot: netDot,
-    measureInsets: measureInsets
+    measureInsets: measureInsets,
+    compatibilityMode: compatibilityMode
   };
 })();

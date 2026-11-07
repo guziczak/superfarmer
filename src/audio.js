@@ -8,6 +8,7 @@ var AUDIO = (function () {
   var enabled = true;
 
   function ensure() {
+    try {
     if (!ctx) {
       var AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return false;
@@ -16,8 +17,9 @@ var AUDIO = (function () {
       master.gain.value = 0.85;
       master.connect(ctx.destination);
     }
-    if (ctx.state === 'suspended') ctx.resume();
+    if (ctx.state === 'suspended') ctx.resume().catch(function () {});
     return true;
+    } catch (err) { return false; }
   }
 
   function now() { return ctx.currentTime; }

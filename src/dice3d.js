@@ -281,6 +281,54 @@ var DiceScene = (function () {
     return env.texture;
   }
 
+  /* ---------- zgodny widok Canvas 2D: te same bryły i wynik fizyki ---------- */
+  function context2DFor(canvas) {
+    var ctx = null;
+    try { ctx = canvas.getContext('2d'); } catch (err) {}
+    // Nieudana inicjalizacja WebGL mogła już zająć kontekst canvasa.
+    if (!ctx && canvas.parentNode) {
+      var replacement = canvas.cloneNode(false);
+      canvas.parentNode.replaceChild(replacement, canvas);
+      canvas = replacement;
+      ctx = canvas.getContext('2d');
+    }
+    if (!ctx) throw new Error('Przeglądarka nie udostępnia grafiki Canvas 2D.');
+    return { canvas: canvas, ctx: ctx };
+  }
+
+  function roundedRect2D(ctx, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  function makeCanvasRenderer(owner) {
+    var surface = context2DFor(owner.canvas);
+    owner.canvas = surface.canvas;
+    owner.compatibilityMode = true;
+    var ratio = 1, width = 1, height = 1;
+    return {
+      domElement: surface.canvas,
+      shadowMap: {},
+      capabilities: { getMaxAnisotropy: function () { return 1; } },
+      setPixelRatio: function (value) { ratio = value || 1; },
+      setSize: function (w, h) {
+        width = Math.max(1, w); height = Math.max(1, h);
+        surface.canvas.width = Math.round(width * ratio);
+        surface.canvas.height = Math.round(height * ratio);
+        owner._canvasBackground = null;
+      },
+      setClearColor: function () {},
+      render: function () { owner._drawCompatibility(surface.ctx, width, height, ratio); },
+      dispose: function () {}
+    };
+  }
+
   /* ============================================================ */
   function DiceScene(opts) {
     var self = this;
@@ -290,6 +338,9 @@ var DiceScene = (function () {
     this.onImpact = opts.onImpact || function () {};
     this.onThrow = opts.onThrow || function () {};
     this.onHold = opts.onHold || function () {};
+    this.onRollError = opts.onRollError || function () {};
+    this.compatibilityMode = false;
+    this._needsRender = true;
     this.interactive = false;
     this.state = 'idle'; // idle | held | flying | snapping
     this.insets = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -306,7 +357,13 @@ var DiceScene = (function () {
     var W = this.canvas.clientWidth || window.innerWidth;
     var H = this.canvas.clientHeight || window.innerHeight;
 
-    var renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
+    var renderer;
+    try {
+      if (opts.forceCanvas) throw new Error('Canvas 2D requested');
+      renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'default' });
+    } catch (err) {
+      renderer = makeCanvasRenderer(this);
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(W, H, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -319,7 +376,7 @@ var DiceScene = (function () {
 
     var scene = new THREE.Scene();
     this.scene = scene;
-    scene.environment = makeEnvironment(renderer);
+    if (!this.compatibilityMode) scene.environment = makeEnvironment(renderer);
 
     var camera = new THREE.PerspectiveCamera(44, W / H, 0.5, 80);
     var camDist = 15.5, camTilt = 22 * Math.PI / 180;
@@ -482,32 +539,166 @@ var DiceScene = (function () {
     // wejście
     this._bindInput();
 
-    // pętla
+    // Renderujemy tylko ruch lub unieważniony widok; spoczynek nie budzi GPU.
     this._clock = new THREE.Clock();
+    this._clock.start();
     this._acc = 0;
     this._running = true;
-    var loop = function () {
-      if (!self._running) return;
-      requestAnimationFrame(loop);
-      self._tick();
-    };
-    requestAnimationFrame(loop);
-
+    this._raf = 0;
     this._bgTimer = 0;
-    var syncBg = function () {
-      if (document.visibilityState === 'hidden') {
-        self._clock.getDelta(); // zrzuć zaległy czas — tło dolicza od teraz
-        if (!self._bgTimer) self._bgTimer = setInterval(function () { self._tickHidden(); }, 250);
-      } else {
-        if (self._bgTimer) { clearInterval(self._bgTimer); self._bgTimer = 0; }
-        self._clock.getDelta();
-      }
-    };
-    document.addEventListener('visibilitychange', syncBg);
-    syncBg();
+    document.addEventListener('visibilitychange', function () {
+      self._clock.getDelta();
+      self._syncActivity();
+      if (document.visibilityState !== 'hidden') self._invalidate();
+    });
+    this._invalidate();
   }
 
   var P = DiceScene.prototype;
+
+
+  P._syncActivity = function () {
+    var hidden = document.visibilityState === 'hidden';
+    if (hidden && this._raf) { cancelAnimationFrame(this._raf); this._raf = 0; }
+    var needsBackground = hidden && !this.remote && this.state === 'flying';
+    if (needsBackground && !this._bgTimer) {
+      var self = this;
+      this._bgTimer = setInterval(function () { self._tickHidden(); }, 250);
+    } else if (!needsBackground && this._bgTimer) {
+      clearInterval(this._bgTimer); this._bgTimer = 0;
+    }
+  };
+
+  P._invalidate = function () {
+    this._needsRender = true;
+    if (!this._running) return;
+    this._syncActivity();
+    if (document.visibilityState === 'hidden' || this._raf) return;
+    var self = this;
+    this._raf = requestAnimationFrame(function () {
+      self._raf = 0;
+      self._tick();
+      if ((!self.remote && self.isBusy()) || self._shake > 0.002) self._invalidate();
+    });
+  };
+
+
+  P._drawCompatibility = function (ctx, width, height, ratio) {
+    if (!this.camera || !this.dice) return;
+    var ins = this.insets, self = this;
+    var left = Math.min(width - 30, Math.max(12, ins.left + 10));
+    var top = Math.min(height - 30, Math.max(12, ins.top + 10));
+    var tw = Math.max(24, width - left - Math.max(12, ins.right + 10));
+    var th = Math.max(24, height - top - Math.max(12, ins.bottom + 10));
+    var key = [width, height, left, top, tw, th, ratio].join(':');
+    var bg = this._canvasBackground;
+    if (!bg || bg.key !== key) {
+      var cv = document.createElement('canvas');
+      cv.width = Math.round(width * ratio); cv.height = Math.round(height * ratio);
+      var c = cv.getContext('2d');
+      c.setTransform(ratio, 0, 0, ratio, 0, 0);
+      c.fillStyle = '#edf0e7'; c.fillRect(0, 0, width, height);
+      c.save();
+      c.shadowColor = 'rgba(18,42,31,0.18)'; c.shadowBlur = 24; c.shadowOffsetY = 6;
+      roundedRect2D(c, left - 3, top - 3, tw + 6, th + 6, 27);
+      c.fillStyle = '#a88950'; c.fill();
+      c.restore();
+      var felt = c.createLinearGradient(left, top, left + tw * 0.5, top + th);
+      felt.addColorStop(0, '#315b48'); felt.addColorStop(0.52, '#234937'); felt.addColorStop(1, '#183c2e');
+      roundedRect2D(c, left, top, tw, th, 24);
+      c.fillStyle = felt; c.fill();
+      c.save(); c.clip();
+      // Delikatny, nieruchomy splot filcu, rysowany tylko po zmianie rozmiaru.
+      c.fillStyle = 'rgba(233,239,210,0.055)';
+      for (var y = top + 8; y < top + th; y += 12) {
+        for (var x = left + 8; x < left + tw; x += 14) c.fillRect(x, y, 1, 1);
+      }
+      c.restore();
+      roundedRect2D(c, left + 10, top + 10, Math.max(2, tw - 20), Math.max(2, th - 20), 17);
+      c.strokeStyle = 'rgba(211,220,173,0.17)'; c.lineWidth = 1; c.stroke();
+      this._canvasBackground = bg = { key: key, canvas: cv };
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, width * ratio, height * ratio);
+    ctx.drawImage(bg.canvas, 0, 0);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    this.camera.updateMatrixWorld(true);
+    function project(v) {
+      var p = new THREE.Vector3(v.x, v.y, v.z).project(self.camera);
+      return { x: (p.x + 1) * width / 2, y: (1 - p.y) * height / 2 };
+    }
+    var ordered = this.dice.map(function (d, i) { return { d: d, i: i, p: project(d.mesh.position) }; });
+    ordered.sort(function (a, b) { return a.p.y - b.p.y; });
+    ordered.forEach(function (entry) {
+      var d = entry.d, i = entry.i, pos = d.mesh.position, p = entry.p;
+      var right = project({ x: pos.x + self.U, y: pos.y, z: pos.z });
+      var r = Math.max(21, Math.min(75, Math.abs(right.x - p.x) * 1.15));
+      var ground = project({ x: pos.x, y: 0, z: pos.z });
+      var lift = Math.max(0, pos.y / self.U - 1);
+      ctx.save();
+      ctx.fillStyle = 'rgba(3,19,12,' + Math.max(0.1, 0.28 - lift * 0.025) + ')';
+      ctx.beginPath(); ctx.ellipse(ground.x, ground.y + r * 0.13, r * (0.95 + lift * 0.025), r * 0.44, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      var q = d.mesh.quaternion;
+      var yaw = Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.z * q.z));
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(yaw);
+      ctx.shadowColor = 'rgba(6,22,14,0.24)'; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
+      roundedRect2D(ctx, -r, -r, r * 2, r * 2, r * 0.38);
+      var cream = ctx.createLinearGradient(-r, -r, r, r);
+      cream.addColorStop(0, i === 0 ? '#fffaf0' : '#f7ddb0');
+      cream.addColorStop(1, i === 0 ? '#e8dbc0' : '#d7ad70');
+      ctx.fillStyle = cream; ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = i === 0 ? '#fffdf5' : '#f9e6bd'; ctx.lineWidth = 1.7; ctx.stroke();
+      roundedRect2D(ctx, -r + 5, -r + 5, r * 2 - 10, r * 2 - 10, r * 0.31);
+      ctx.strokeStyle = 'rgba(106,80,37,0.16)'; ctx.lineWidth = 1; ctx.stroke();
+      var best = 0, bestDot = -2, n = new THREE.Vector3();
+      for (var f = 0; f < 12; f++) {
+        n.fromArray(self.dod.normals[f]).applyQuaternion(q);
+        if (n.y > bestDot) { bestDot = n.y; best = f; }
+      }
+      var symbol = d.symbols[best], atlas = self.opts.atlasCanvas;
+      if (atlas) {
+        var cell = SYMBOLS.cellOf(symbol), cw = atlas.width / 4, ch = atlas.height / 2;
+        ctx.drawImage(atlas, cell.col * cw, cell.row * ch, cw, ch, -r * 0.92, -r * 0.92, r * 1.84, r * 1.84);
+      } else {
+        SYMBOLS.drawAnimal(ctx, symbol, -r * 0.7, -r * 0.7, r * 1.4);
+      }
+      if (self.mode === 'w' && Math.abs(self.bias[i]) > 0.004) {
+        ctx.beginPath(); ctx.arc(r * 0.66, -r * 0.66, r * 0.075, 0, Math.PI * 2);
+        ctx.fillStyle = '#ad8134'; ctx.fill(); ctx.strokeStyle = '#f8e7a6'; ctx.stroke();
+      }
+      ctx.restore();
+    });
+  };
+
+  P._previewBias2D = function (cvA, cvB, tuning) {
+    var values = tuning && tuning.length === 2 ? tuning : (tuning && tuning.v) || [0, 0];
+    var mode = tuning && tuning.m === 's' ? 's' : 'w';
+    var ratio = Math.min(2, window.devicePixelRatio || 1);
+    for (var i = 0; i < 2; i++) {
+      var surface = context2DFor(i ? cvB : cvA), cv = surface.canvas, c = surface.ctx;
+      cv.width = cv.height = Math.round(96 * ratio);
+      c.setTransform(ratio, 0, 0, ratio, 0, 0);
+      c.clearRect(0, 0, 96, 96);
+      var value = Math.max(-1, Math.min(1, +values[i] || 0));
+      var stretch = mode === 's' ? 1 + value * 0.13 : 1;
+      c.save(); c.translate(48, 45); c.scale(stretch, 1);
+      roundedRect2D(c, -34, -32, 68, 68, 18);
+      c.fillStyle = i === 0 ? 'rgba(255,247,226,0.86)' : 'rgba(236,202,148,0.86)'; c.fill();
+      c.strokeStyle = '#bda26b'; c.lineWidth = 1.5; c.stroke();
+      c.restore();
+      SYMBOLS.drawAnimal(c, this.dice[i].symbols[this.dice[i].predFace], 32, 16, 32);
+      c.beginPath(); c.moveTo(25, 62); c.lineTo(71, 62); c.strokeStyle = 'rgba(85,71,40,0.24)'; c.lineWidth = 1; c.stroke();
+      if (mode === 'w') {
+        c.beginPath(); c.arc(48 + value * 22, 62, 6, 0, Math.PI * 2);
+        c.fillStyle = '#b08939'; c.fill(); c.strokeStyle = '#f4df96'; c.stroke();
+      } else {
+        c.strokeStyle = '#b08939'; c.lineWidth = 3;
+        c.beginPath(); c.moveTo(18 - value * 4, 28); c.lineTo(18 - value * 4, 65); c.stroke();
+      }
+    }
+  };
 
   /* ---------- prostokąt tacy z frustum kamery ---------- */
   P._computeRect = function () {
@@ -661,6 +852,8 @@ var DiceScene = (function () {
       this._rebuildBody(i);
     }
     if (this.state === 'idle') this._restDice(false);
+    this._syncMeshes();
+    this._invalidate();
   };
   P.setBias = P.setTuning; // alias zgodności
 
@@ -696,6 +889,7 @@ var DiceScene = (function () {
       }
       this.state = 'idle';
     }
+    this._invalidate();
   };
 
   P.applyNetFrame = function (d) {
@@ -707,6 +901,7 @@ var DiceScene = (function () {
       m.quaternion.set(f[3], f[4], f[5], f[6]).normalize();
     }
     this._lastNet = d;
+    this._invalidate();
   };
 
   /** Koniec transmisji: przenieś finalne transformy z meshy na ciała fizyczne. */
@@ -730,6 +925,9 @@ var DiceScene = (function () {
     }
     this.remote = false;
     this._lastNet = null;
+    for (var j = 0; j < 2; j++) this._lockDie(j);
+    this._syncMeshes();
+    this._invalidate();
   };
 
   /* ---------- podgląd 3D kostek w panelu zaawansowanym ----------
@@ -737,6 +935,7 @@ var DiceScene = (function () {
      pozycji wzdłuż osi drapieżnik↔przeciwległa: 0 = środek bryły, ±100% = kula
      dotyka ścianki od wewnątrz. Oś leży poziomo, zgodnie z kierunkiem suwaka. */
   P.previewBias = function (cvA, cvB, biasArr) {
+    if (this.compatibilityMode) { this._previewBias2D(cvA, cvB, biasArr); return; }
     if (!this._prev) {
       this._prev = [];
       for (var i = 0; i < 2; i++) {
@@ -873,6 +1072,8 @@ var DiceScene = (function () {
     this._resizeDice();
     this._layoutTray();
     this._clampDice();
+    this._syncMeshes();
+    this._invalidate();
   };
 
   P.resize = function () {
@@ -882,6 +1083,8 @@ var DiceScene = (function () {
     this._resizeDice();
     this._layoutTray();
     this._clampDice();
+    this._syncMeshes();
+    this._invalidate();
   };
 
   P._clampDice = function () {
@@ -898,22 +1101,33 @@ var DiceScene = (function () {
   P._restDice = function (initial) {
     var r = this.rect, U = this.U;
     for (var i = 0; i < 2; i++) {
+      var die = this.dice[i], keepLocked = die.locked;
       this._unlockDie(i);
-      var b = this.dice[i].body;
-      var f = Math.floor(Math.random() * 12);
-      var n = this.dod.normals[f];
-      var q = new THREE.Quaternion().setFromUnitVectors(
-        new THREE.Vector3(n[0], n[1], n[2]), new THREE.Vector3(0, -1, 0));
-      var yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI * 2);
-      yaw.multiply(q);
-      b.quaternion.set(yaw.x, yaw.y, yaw.z, yaw.w);
-      var so = this.dice[i].shapeOff;
-      var oy = this._tmpV.set(so.x, so.y, so.z).applyQuaternion(yaw).y;
-      var hf = this.dice[i].hs ? this.dice[i].hs[f] : 1; // wysokość spoczynku na tej ściance
+      var b = die.body, f = 0;
+      if (initial) {
+        f = Math.floor(Math.random() * 12);
+        var n = this.dod.normals[f];
+        var q = new THREE.Quaternion().setFromUnitVectors(
+          new THREE.Vector3(n[0], n[1], n[2]), new THREE.Vector3(0, -1, 0));
+        var yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI * 2);
+        yaw.multiply(q);
+        b.quaternion.set(yaw.x, yaw.y, yaw.z, yaw.w);
+      } else {
+        // Obrót ekranu i zmiana układu nie losują nowej ścianki zakończonego rzutu.
+        var lowest = 2;
+        for (var fi = 0; fi < 12; fi++) {
+          var ny = this._tmpV.fromArray(this.dod.normals[fi]).applyQuaternion(b.quaternion).y;
+          if (ny < lowest) { lowest = ny; f = fi; }
+        }
+      }
+      var so = die.shapeOff;
+      var oy = this._tmpV.set(so.x, so.y, so.z).applyQuaternion(b.quaternion).y;
+      var hf = die.hs ? die.hs[f] : 1;
       b.position.set(r.cx + (i === 0 ? -1.35 : 1.35) * U, U * hf - oy + 0.01, r.cz + r.h * 0.18 + (i === 0 ? 0.2 : -0.2) * U);
-      b.velocity.setZero();
-      b.angularVelocity.setZero();
+      b.velocity.setZero(); b.angularVelocity.setZero();
+      b.aabbNeedsUpdate = true;
       b.sleep();
+      if (keepLocked) this._lockDie(i);
     }
   };
 
@@ -954,7 +1168,7 @@ var DiceScene = (function () {
       // wysokość GEOMETRYCZNEGO środka bryły (origin ciała = środek masy, przy
       // obciążeniu przesunięty nawet o cały U) — leży na filcu, nie na drugiej kostce
       var gy = b.position.y + this._tmpV.set(d.shapeOff.x, d.shapeOff.y, d.shapeOff.z)
-        .applyQuaternion(d.mesh.quaternion).y;
+        .applyQuaternion(b.quaternion).y;
       if (gy > this.U * (d.maxH + 0.35)) continue;
       if (this._faceUp(d).dot < 0.99999) continue;  // przekrzywiona zostaje żywa
       this._lockDie(i);
@@ -1010,6 +1224,11 @@ var DiceScene = (function () {
 
     cv.addEventListener('pointerdown', function (e) {
       if (!self.interactive || (self.state !== 'idle' && self.state !== 'held')) return;
+      if (self.state === 'idle') {
+        self._unlockDie(0); self._unlockDie(1);
+        if (self._clock) self._clock.getDelta();
+        self._hasResult = false;
+      }
       var w = toWorld(e.clientX, e.clientY, self.U * 2.1);
       var held = heldDice();
       var assign = [];
@@ -1033,6 +1252,7 @@ var DiceScene = (function () {
       self._holds[e.pointerId] = { dice: assign, target: w.clone(), history: [{ x: w.x, z: w.z, t: performance.now() }] };
       assign.forEach(function (i) { self.dice[i].body.wakeUp(); });
       self.state = 'held';
+      self._invalidate();
       try { cv.setPointerCapture(e.pointerId); } catch (err) {}
       if (wasEmpty) self.onHold(true);
       e.preventDefault();
@@ -1127,6 +1347,10 @@ var DiceScene = (function () {
     this._settleTimer = 0;
     this._flightTime = 0;
     this._cockedTries = 0;
+    this._cockedTimer = 0;
+    this._hasResult = false;
+    if (this._clock) this._clock.getDelta();
+    this._invalidate();
     this.onThrow();
   };
 
@@ -1145,7 +1369,8 @@ var DiceScene = (function () {
   /* ---------- główna pętla ---------- */
   P._tick = function () {
     var dt = Math.min(0.05, this._clock.getDelta());
-    this._acc += dt;
+    var active = !this.remote && this.isBusy();
+    this._acc = active ? this._acc + dt : 0;
     var step = 1 / 120;
     var guard = 0;
     while (this._acc >= step && guard < 10) {
@@ -1160,7 +1385,7 @@ var DiceScene = (function () {
     // watchdog: kostka poza tacą lub pod stołem → ratunkowy powrót
     var r = this.rect, U = this.U;
     for (var w = 0; w < 2; w++) {
-      if (this.remote || this.dice[w].locked) continue;
+      if (!active || this.remote || this.dice[w].locked) continue;
       var wb = this.dice[w].body;
       if (wb.position.y < -U * 2 || wb.position.y > U * 30 ||
           wb.position.x < r.x0 - U * 4 || wb.position.x > r.x1 + U * 4 ||
@@ -1194,6 +1419,8 @@ var DiceScene = (function () {
 
     this._checkSettle(dt);
     this.renderer.render(this.scene, this.camera);
+    this._needsRender = false;
+    this._syncActivity();
   };
 
   P._syncMeshes = function () {
@@ -1212,7 +1439,7 @@ var DiceScene = (function () {
   /** Karta w tle: rAF stoi, więc lot kostek dolicza timer — te same kroki 1/120,
       tylko inny zegar. Bez tego rzut zamiera, a w grze sieciowej przeciwnik czeka. */
   P._tickHidden = function () {
-    if (this.state !== 'flying') return;
+    if (this.state !== 'flying' || this.remote) { this._syncActivity(); return; }
     var dt = Math.min(2.5, this._clock.getDelta());
     this._acc += dt;
     var step = 1 / 120, guard = 0;
@@ -1222,8 +1449,10 @@ var DiceScene = (function () {
       guard++;
     }
     if (guard >= 300) this._acc = 0;
+    this._lockSettledDice();
     this._syncMeshes();
     this._checkSettle(dt);
+    this._syncActivity();
   };
 
   P._physStep = function (step) {
@@ -1260,79 +1489,88 @@ var DiceScene = (function () {
     this.world.step(step);
   };
 
-  P._checkSettle = function (dt) {
-    if (this.state !== 'flying') return;
-    var calm = true;
-    var U = this.U;
-    this._flightTime += dt;
-    var overtime = this._flightTime > 6.5; // bezpiecznik: nigdy nie wisimy w nieskończoność
-    for (var i = 0; i < 2; i++) {
-      var b = this.dice[i].body;
-      if (b.sleepState !== CANNON.Body.SLEEPING) {
-        if (b.velocity.length() > U * 0.55 || b.angularVelocity.length() > 0.6) { calm = false; break; }
-      }
-    }
-    if (!calm && !overtime) { this._settleTimer = 0; return; }
-    this._settleTimer += dt;
-    if (this._settleTimer < 0.4 && !overtime) return;
+  /** Wyłącznie fizyczny spoczynek na ścianie, nigdy upływ czasu, uprawnia do wyniku. */
+  P._isDieStable = function (die) {
+    var b = die.body;
+    if (!isFinite(b.position.x + b.position.y + b.position.z + b.quaternion.x + b.quaternion.y + b.quaternion.z + b.quaternion.w)) return false;
+    if (b.velocity.length() > this.U * 0.02 || b.angularVelocity.length() > 0.02) return false;
+    if (!die.locked && b.sleepState !== CANNON.Body.SLEEPING) return false;
+    var f = this._faceUp(die);
+    if (f.face < 0 || f.dot < 0.99999) return false;
+    var gy = b.position.y + this._tmpV.set(die.shapeOff.x, die.shapeOff.y, die.shapeOff.z).applyQuaternion(b.quaternion).y;
+    return gy > -this.U * 0.05 && gy <= this.U * (die.maxH + 0.35);
+  };
 
-    // kostka wolnostojąca osiada <0.05° od poziomu sama z siebie;
-    // każdy większy przechył = kostka o coś oparta => uczciwy przerzut
-    var results = [], leaning = false;
-    for (var j = 0; j < 2; j++) {
-      var r = this._faceUp(this.dice[j]);
-      results.push(r);
-      if (r.dot < 0.99999) leaning = true;
+  /** Fizyczny przerzut zakleszczonej kostki. Zostawiamy jej obrót, nie wybieramy symbolu. */
+  P._rescueDie = function (index) {
+    var die = this.dice[index], b = die.body, other = this.dice[1 - index].body;
+    var U = this.U, r = this.rect, margin = U * 1.5;
+    var candidates = [
+      [r.cx - r.w * 0.26, r.cz - r.h * 0.24], [r.cx + r.w * 0.26, r.cz + r.h * 0.24],
+      [r.cx - r.w * 0.26, r.cz + r.h * 0.24], [r.cx + r.w * 0.26, r.cz - r.h * 0.24]
+    ];
+    var chosen = candidates[0], best = -Infinity;
+    for (var n = 0; n < candidates.length; n++) {
+      var c = candidates[(n + this._cockedTries) % candidates.length];
+      var x = Math.max(r.x0 + margin, Math.min(r.x1 - margin, c[0]));
+      var z = Math.max(r.z0 + margin, Math.min(r.z1 - margin, c[1]));
+      var distance = Math.hypot(x - other.position.x, z - other.position.z);
+      var score = isFinite(distance) ? distance : 1;
+      if (score > best) { best = score; chosen = [x, z]; }
     }
-    if (leaning && this._cockedTries < 5 && !overtime) {
-      this._cockedTries++;
-      this._settleTimer = 0;
-      this._flightTime = 0; // bezpiecznik liczy czas od OSTATNIEGO przerzutu; całość ogranicza licznik prób
-      for (var m = 0; m < 2; m++) {
-        var bb = this.dice[m].body;
-        if (results[m].dot < 0.99999) {
-          bb.wakeUp();
-          // przerzut w najbardziej wolne miejsce: kandydaci = ku środkowi, od drugiej
-          // kostki i po stycznych; wygrywa kierunek z największym prześwitem od
-          // przeszkód (druga kostka — może być zastygnięta „ze stali” — oraz ściany)
-          var ob = this.dice[1 - m].body;
-          var r0 = this.rect;
-          var px = bb.position.x, pz = bb.position.z;
-          var cands = [];
-          var cdx = r0.cx - px, cdz = r0.cz - pz;
-          var cl = Math.hypot(cdx, cdz);
-          if (cl > 1e-6) cands.push([cdx / cl, cdz / cl]);
-          var ax = px - ob.position.x, az = pz - ob.position.z;
-          var ad = Math.hypot(ax, az);
-          if (ad > 1e-6) {
-            cands.push([ax / ad, az / ad]);
-            cands.push([-az / ad, ax / ad]);
-            cands.push([az / ad, -ax / ad]);
-          }
-          if (!cands.length) cands.push([1, 0]);
-          var dirx = cands[0][0], dirz = cands[0][1], bestScore = -1e9;
-          for (var ci = 0; ci < cands.length; ci++) {
-            var tx = px + cands[ci][0] * U * 2, tz = pz + cands[ci][1] * U * 2;
-            var dOther = Math.hypot(tx - ob.position.x, tz - ob.position.z);
-            var dWall = Math.min(tx - r0.x0, r0.x1 - tx, tz - r0.z0, r0.z1 - tz);
-            var score = Math.min(dOther, dWall);
-            if (score > bestScore) { bestScore = score; dirx = cands[ci][0]; dirz = cands[ci][1]; }
-          }
-          bb.position.y += U * 0.5;
-          bb.position.x = Math.min(Math.max(px + dirx * U * 0.6, r0.x0 + U), r0.x1 - U);
-          bb.position.z = Math.min(Math.max(pz + dirz * U * 0.6, r0.z0 + U), r0.z1 - U);
-          bb.velocity.set(dirx * U * 2.4, U * 2.2, dirz * U * 2.4);
-          bb.angularVelocity.set((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 2.5, (Math.random() - 0.5) * 5);
-        }
-      }
+    this._unlockDie(index);
+    die.thrown = true;
+    if (!isFinite(b.quaternion.x + b.quaternion.y + b.quaternion.z + b.quaternion.w)) b.quaternion.set(0, 0, 0, 1);
+    b.quaternion.normalize();
+    b.position.set(chosen[0], U * (die.maxH + 2.2), chosen[1]);
+    var angle = Math.random() * Math.PI * 2;
+    b.velocity.set(Math.cos(angle) * U * 1.5, U * 2.6, Math.sin(angle) * U * 1.5);
+    b.angularVelocity.set((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 12);
+    b.force.setZero(); b.torque.setZero();
+    b.aabbNeedsUpdate = true;
+    b.wakeUp();
+  };
+
+  P._checkSettle = function (dt) {
+    if (this.state !== 'flying' || this.remote) return;
+    this._flightTime += dt;
+    var stable = this.dice.map(this._isDieStable.bind(this));
+    if (stable[0] && stable[1]) {
+      this._settleTimer += dt;
+      if (this._settleTimer < 0.12) return;
+      // Wynik i finalny kadr są jedną migawką. Statyczne ciała zostają zamrożone
+      // aż do NOWEGO rzutu, więc druga kostka ani kolejne klatki nie zmienią wyniku.
+      for (var i = 0; i < 2; i++) this._lockDie(i);
+      this.state = 'idle';
+      this._hasResult = true;
+      this._syncMeshes();
+      var results = [this._faceUp(this.dice[0]).symbol, this._faceUp(this.dice[1]).symbol];
+      this._invalidate();
+      this.onSettle(results);
       return;
     }
-    // ŻADNEGO obracania kostek po rzucie — leżą tak, jak upadły.
-    // Bryła jest poprawnym dwunastościanem foremnym (każda para ścianek
-    // równoległa), więc spoczynek na płask daje górną ściankę poziomą sam z siebie.
-    this.state = 'idle';
-    for (var un = 0; un < 2; un++) this._unlockDie(un);
-    this.onSettle([results[0].symbol, results[1].symbol]);
+    this._settleTimer = 0;
+    var badRest = false;
+    for (var j = 0; j < 2; j++) {
+      if (!stable[j] && this.dice[j].body.sleepState === CANNON.Body.SLEEPING) badRest = true;
+    }
+    this._cockedTimer = badRest ? (this._cockedTimer || 0) + dt : 0;
+    if (this._flightTime <= 6.5 && this._cockedTimer < 0.45) return;
+    // Pięć ograniczonych prób ratunkowych. Awaria oznacza ponowny rzut gracza,
+    // nigdy zatwierdzenie przypadkowej ścianki w locie ani nieskończone oczekiwanie.
+    if (this._cockedTries >= 5) {
+      for (var k = 0; k < 2; k++) { this.dice[k].body.sleep(); this._lockDie(k); }
+      this.state = 'idle';
+      this._hasResult = false;
+      this._syncMeshes();
+      this._invalidate();
+      this.onRollError('Kostka utknęła. Rzuć ponownie — ten rzut nie został policzony.');
+      return;
+    }
+    this._cockedTries++;
+    this._flightTime = 0;
+    this._cockedTimer = 0;
+    for (var m = 0; m < 2; m++) if (!stable[m]) this._rescueDie(m);
   };
 
   /* ---------- API ---------- */
@@ -1352,6 +1590,7 @@ var DiceScene = (function () {
     var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduce) return;
     this._shake = Math.max(this._shake, power || 0.6);
+    this._invalidate();
   };
 
   P.getDieScreenPos = function (i) {

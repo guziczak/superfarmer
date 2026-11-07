@@ -17,13 +17,28 @@ var AI = (function () {
    * Priorytety: domknięcie kompletu → ochrona psami → budowa drabinki w górę.
    */
   function chooseExchange(herd, stock) {
+    if (!RULES.validHerd(herd) || !RULES.validHerd(stock)) return null;
     var t;
     var can = function (id, dir, times) {
       var r = rateById(id);
       return RULES.canExchange(herd, stock, r, dir, times || 1) ? r : null;
     };
 
-    // 1. Ostatni brakujący do wygranej — bierz natychmiast
+    // Najpierw sprawdź KAŻDĄ legalną wymianę, także w dół i za psa.
+    // Dopiero potem heurystyka: okazja do wygranej ma zawsze pierwszeństwo.
+    for (var ri = 0; ri < RULES.EXCHANGE_RATES.length; ri++) {
+      var rate = RULES.EXCHANGE_RATES[ri];
+      for (var di = 0; di < 2; di++) {
+        var dir = di === 0 ? 1 : -1;
+        var max = RULES.maxTimes(herd, stock, rate, dir);
+        for (var n = 1; n <= max; n++) {
+          var after = RULES.applyExchange(herd, stock, rate, dir, n);
+          if (after && RULES.checkWin(after.herd)) return { rate: rate, dir: dir, times: n };
+        }
+      }
+    }
+
+    // 1. Zdobywaj brakujące gatunki, zachowując dotychczasową strategię.
     if (herd.horse === 0 && (t = can('c-h', 1))) return { rate: t, dir: 1, times: 1 };
     if (herd.cow === 0 && (t = can('p-c', 1))) return { rate: t, dir: 1, times: 1 };
     if (herd.pig === 0 && (t = can('s-p', 1))) return { rate: t, dir: 1, times: 1 };
@@ -41,7 +56,6 @@ var AI = (function () {
     }
 
     // 4. Drabinka w górę z nadwyżek (zostawiaj bazę do rozmnażania)
-    if (herd.cow >= 3 && herd.horse === 0) { /* obsłużone w 1 */ }
     if (herd.pig >= 4 && (t = can('p-c', 1))) return { rate: t, dir: 1, times: 1 };
     if (herd.sheep >= 4 && (t = can('s-p', 1))) return { rate: t, dir: 1, times: 1 };
     if (herd.rabbit >= 13 && (t = can('r-s', 1))) {
@@ -50,7 +64,7 @@ var AI = (function () {
     }
 
     // 5. Odbuduj bazę królików, jeśli wyzerowana a jest nadmiar owiec
-    if (herd.rabbit === 0 && herd.sheep >= 3 && (t = can('r-s', -1))) return { rate: t, dir: -1, times: 1 };
+    if (herd.rabbit === 0 && herd.sheep >= 2 && (t = can('r-s', -1))) return { rate: t, dir: -1, times: 1 };
 
     return null;
   }
