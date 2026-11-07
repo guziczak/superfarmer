@@ -171,6 +171,16 @@ p.frame();
 
 // Hidden tabs finish the physical roll without drawing or leaving a timer alive afterwards.
 dice.throwAuto();
+// Reuse physically settled orientations for a short drop at the smaller phone
+// scale. Underconverged contacts used to restart Cannon's sleep timer repeatedly,
+// so this verifies real resting-contact convergence and background scheduling.
+for (let i = 0; i < dice.dice.length; i++) {
+  const body = dice.dice[i].body;
+  body.position.set(dice.rect.cx + (i ? 1 : -1) * dice.U * 1.8, dice.U * 1.15, dice.rect.cz);
+  body.quaternion.set(...finalPose[i].slice(3));
+  body.velocity.setZero(); body.angularVelocity.setZero();
+  body.aabbNeedsUpdate = true; body.wakeUp();
+}
 p.document.visibilityState = 'hidden'; p.events.get('visibilitychange').forEach(callback => callback());
 check(p.rafs.size === 0 && p.intervals.size === 1, 'hidden throws use one physics timer instead of rendering');
 const hiddenPaints = dice.canvas.calls.drawImage;
@@ -183,14 +193,16 @@ p.document.visibilityState = 'visible'; p.events.get('visibilitychange').forEach
 p.frame();
 check(dice.canvas.calls.drawImage > hiddenPaints && p.rafs.size === 0, 'returning to the tab paints once and sleeps');
 
-// The new visual bevel is a closed mesh with planar pentagons, wholly inside
-// the unchanged physical hull. Check both regular and deliberately shaved dice.
-function verifyBevel(scene, label) {
+// The restored resin surface is the K13 smooth intersection of the twelve
+// unchanged collision planes. Check the implicit surface, its analytic gradient,
+// closure and physical envelope for both normal and deliberately shaved dice.
+function verifyRounded(scene, label) {
   for (const die of scene.dice) {
     const geometry = die.mesh.geometry, position = geometry.attributes.position, normal = geometry.attributes.normal;
-    const heights = geometry.userData.sfBevel.heights;
-    const edges = new Map();
-    let inside = true, outward = true, unitNormals = true, planar = true;
+    const { heights, K, outline } = geometry.userData.sfRounded;
+    const planes = scene.dod.normals.map(n => new THREE.Vector3().fromArray(n));
+    const edges = new Map(), supports = heights.map(() => -Infinity);
+    let inside = true, outward = true, unitNormals = true, onSurface = true, gradientMatches = true, boundsContain = true;
     const keyOf = v => v.toArray().map(n => Math.round(n * 100000)).join(',');
     for (let i = 0; i < position.count; i += 3) {
       const vertices = [0, 1, 2].map(j => new THREE.Vector3().fromBufferAttribute(position, i + j));
@@ -198,39 +210,46 @@ function verifyBevel(scene, label) {
       const cross = vertices[1].clone().sub(vertices[0]).cross(vertices[2].clone().sub(vertices[0]));
       outward &&= cross.lengthSq() > 1e-15 && cross.dot(ns[0].clone().add(ns[1]).add(ns[2])) > 0;
       for (let j = 0; j < 3; j++) {
-        const v = vertices[j], n = ns[j];
+        const v = vertices[j], n = ns[j], gradient = new THREE.Vector3();
+        let sum = 0;
         unitNormals &&= Number.isFinite(v.lengthSq()) && Math.abs(n.length() - 1) < 1e-5;
-        scene.dod.normals.forEach((plane, fi) => { inside &&= new THREE.Vector3().fromArray(plane).dot(v) <= heights[fi] + 1e-5; });
-        if (i < 12 * 5 * 3) {
-          const faceIndex = Math.floor(i / 15), faceNormal = new THREE.Vector3().fromArray(scene.dod.normals[faceIndex]);
-          planar &&= Math.abs(faceNormal.dot(v) - heights[faceIndex]) < 1e-5 && n.distanceTo(faceNormal) < 1e-5;
-        }
+        planes.forEach((plane, fi) => {
+          const distance = plane.dot(v), weight = Math.exp(K * (distance / heights[fi] - 1));
+          inside &&= distance <= heights[fi] + 1e-5;
+          supports[fi] = Math.max(supports[fi], distance);
+          sum += weight;
+          gradient.addScaledVector(plane, weight / heights[fi]);
+        });
+        onSurface &&= Math.abs(sum - 1) < 2e-6;
+        gradientMatches &&= gradient.normalize().distanceTo(n) < 2e-5;
+        boundsContain &&= geometry.boundingBox.containsPoint(v) && v.distanceTo(geometry.boundingSphere.center) <= geometry.boundingSphere.radius + 1e-5;
         const edgeKey = [keyOf(v), keyOf(vertices[(j + 1) % 3])].sort().join('|');
         edges.set(edgeKey, (edges.get(edgeKey) || 0) + 1);
       }
     }
     check(unitNormals && outward, label + ': finite vertices, unit normals, outward nondegenerate faces');
-    check(inside && planar, label + ': all twelve faces remain planar and the bevel stays inside the physical hull');
+    check(inside && onSurface && supports.every((support, i) => heights[i] - support < 0.025), label + ': rounded K13 surface stays inside and close to all physical planes');
+    check(gradientMatches && boundsContain, label + ': normals follow the real surface gradient, including shaved heights, and updated bounds contain the surface');
     check([...edges.values()].every(count => count === 2), label + ': visual mesh is watertight');
-    check(position.count < 5000, label + ': the detailed bevel keeps a small mesh');
+    check(position.count <= 15000 && outline.length <= 1000, label + ': smooth mesh and Canvas silhouette have bounded size');
   }
 }
-verifyBevel(dice, 'regular dice');
+verifyRounded(dice, 'regular dice');
 for (const d of dice.dice) {
   check(d.body.shapes[0].vertices.length === 20 && d.body.shapes[0].faces.length === 12, 'collision hull remains a dodecahedron');
-  check(d.body.shapes[0].vertices.every((v, i) => new THREE.Vector3(v.x, v.y, v.z).divideScalar(dice.U).distanceTo(new THREE.Vector3().fromArray(dice.dod.verts[i])) < 1e-9), 'visual bevel never alters collision vertices');
+  check(d.body.shapes[0].vertices.every((v, i) => new THREE.Vector3(v.x, v.y, v.z).divideScalar(dice.U).distanceTo(new THREE.Vector3().fromArray(dice.dod.verts[i])) < 1e-9), 'rounded visuals never alter collision vertices');
   const shader = { uniforms: {}, vertexShader: THREE.ShaderLib.physical.vertexShader, fragmentShader: THREE.ShaderLib.physical.fragmentShader };
   d.mesh.material.onBeforeCompile(shader);
-  check(shader.vertexShader.includes('sfPos = position;') && shader.fragmentShader.includes('float flatMask = smoothstep('), 'production shader inserts flat face artwork');
+  check(shader.vertexShader.includes('sfPos = position;') && shader.fragmentShader.includes('vec3 sn = normalize(sfNor);'), 'production shader applies printed animals to the curved physical surface');
   check(shader.uniforms.uFaceSym.value.every((index, i) => index === p.context.SYMBOLS.cellOf(d.symbols[i]).index), 'the shader preserves all twelve symbol assignments');
-  check(shader.uniforms.uMedallionColor.value instanceof THREE.Color && shader.uniforms.uFrameColor.value instanceof THREE.Color, 'medallion and frame colors use Three color management');
+  check(!shader.uniforms.uMedallionColor && !shader.uniforms.uFrameColor && Math.abs(shader.uniforms.uSymHalf.value - dice.dod.faceR * 0.6) < 1e-9, 'the original print size is preserved without medallions or frames');
 }
-check(dice.dice[0].mesh.material.color.getHexString() === 'f3edde' && dice.dice[1].mesh.material.color.getHexString() === 'df9c32', 'porcelain and amber are visibly distinct materials');
+check(dice.dice[0].mesh.material.color.getHexString() === 'f4ecd9' && dice.dice[1].mesh.material.color.getHexString() === 'f6e8c9', 'both physical dice retain warm ivory materials');
 check((dice.canvas.calls.transform || 0) > 2, 'Canvas projects the actual individual face planes');
 
 const shaved = p.scene({ forceCanvas: true }).dice;
 shaved.setTuning({ m: 's', v: [0.75, -0.65] });
-verifyBevel(shaved, 'shaved dice');
+verifyRounded(shaved, 'shaved dice');
 shaved._running = false; p.rafs.clear();
 
 // HUD reflow must not resize a moving hull or move a frozen result. The layout
@@ -263,4 +282,37 @@ layout.endRemoteRoll();
 check(layout._hasResult && bounds(layout) === remoteBounds, 'remote final frame also keeps its tray layout');
 layout._running = false; p.rafs.clear();
 
-console.log('OK: ' + assertions + ' assertions; ' + successfulRolls + '/30 real DiceScene throws; watertight bevels, planar faces, shader artwork, Canvas projection, deferred HUD, timeout, fixed results, remote playback and hidden/idle rendering.');
+// The raised wooden rim used to project outside the viewport and under the HUD,
+// even when the floor rectangle fitted. Check actual production vertices after
+// camera projection, including landscape, larger displays and retained die size.
+function verifyFrameFits(scene, width, height, label) {
+  scene.scene.updateMatrixWorld(true); scene.camera.updateMatrixWorld(true);
+  const screen = { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity };
+  for (const mesh of [scene._rimMesh, scene._lipMesh, scene.felt]) {
+    const positions = mesh.geometry.attributes.position;
+    for (let i = 0; i < positions.count; i++) {
+      const point = new THREE.Vector3().fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld).project(scene.camera);
+      const x = (point.x + 1) * width / 2, y = (1 - point.y) * height / 2;
+      screen.left = Math.min(screen.left, x); screen.right = Math.max(screen.right, x);
+      screen.top = Math.min(screen.top, y); screen.bottom = Math.max(screen.bottom, y);
+    }
+  }
+  check(screen.left >= scene.insets.left && screen.right <= width - scene.insets.right &&
+    screen.top >= scene.insets.top && screen.bottom <= height - scene.insets.bottom,
+  label + ': the entire projected frame stays inside the screen and reserved HUD: ' + JSON.stringify(screen));
+}
+for (const [width, height, top, bottom] of [[320, 568, 126, 100], [390, 700, 135, 103], [844, 390, 115, 67], [768, 1024, 125, 100], [1363, 936, 135, 103]]) {
+  const fitted = p.scene({ forceCanvas: true, canvas: new p.Canvas(width, height) }).dice;
+  fitted.setInsets({ top, right: 0, bottom, left: 0 });
+  verifyFrameFits(fitted, width, height, width + 'x' + height);
+  fitted._running = false; p.rafs.clear();
+}
+const retained = p.scene({ forceCanvas: true, canvas: new p.Canvas(900, 680) }).dice;
+retained.setInsets({ top: 100, right: 0, bottom: 95, left: 0 });
+const retainedU = retained.U;
+retained.canvas.clientWidth = 880; retained.canvas.clientHeight = 660; retained.resize();
+check(retained.U === retainedU, 'a small resize preserves the established physical die-size hysteresis');
+verifyFrameFits(retained, 880, 660, 'small resize retaining die size');
+retained._running = false; p.rafs.clear();
+
+console.log('OK: ' + assertions + ' assertions; ' + successfulRolls + '/30 real DiceScene throws; watertight rounded surfaces, analytic normals, printed artwork, Canvas projection, fitted wooden frame, deferred HUD, timeout, fixed results, remote playback and hidden/idle rendering.');

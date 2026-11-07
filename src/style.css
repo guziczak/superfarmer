@@ -5,7 +5,7 @@
   --paper-bright: #fffdf7;
   --forest: #234d38;
   --forest-deep: #163b2a;
-  --wood-deep: #1b382b;
+  --wood-deep: #2b1f15;
   --panel: rgba(252, 250, 242, .96);
   --panel-solid: #fcfaf3;
   --line: rgba(36, 64, 45, .13);
@@ -29,7 +29,7 @@
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 [hidden] { display: none !important; }
-html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; background: #e8e5dc; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; background: #2b1f15; }
 body { position: fixed; inset: 0; color: var(--cream); font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 15px; -webkit-font-smoothing: antialiased; }
 button, input, textarea { font: inherit; }
 button { padding: 0; border: 0; background: none; color: inherit; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
@@ -147,14 +147,14 @@ button, input, textarea, [tabindex] { -webkit-tap-highlight-color: transparent; 
 .advnote { margin: 6px 0 0; color: var(--cream-faint); font-size: 11px; line-height: 1.65; }
 .advnote b { color: #536346; font-weight: 650; }
 
-/* Table and player cards: compact ivory instruments around a teal playing field. */
+/* Compact ivory player cards above the wood-and-felt table. */
 #scene3d { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
-#vignette { position: fixed; inset: 0; z-index: 1; background: radial-gradient(ellipse at 50% 45%, transparent 60%, #173b3210 100%); pointer-events: none; }
+#vignette { position: fixed; inset: 0; z-index: 1; background: radial-gradient(ellipse at 50% 45%, transparent 60%, #1e160d1a 100%); pointer-events: none; }
 #hud { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
 #hud button { pointer-events: auto; }
 #topbar { position: absolute; top: 0; left: 50%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 7px 10px; width: 100%; max-width: 860px; padding: calc(var(--sat) + 10px) calc(var(--sar) + 18px) 0 calc(var(--sal) + 18px); transform: translateX(-50%); pointer-events: none; }
 #topbar.lead0, #topbar.lead1 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.roundbadge { display: flex; align-items: center; justify-content: center; width: max-content; max-width: 90%; min-height: 15px; padding: 0 10px; color: #526965; font-size: 9px; font-weight: 700; line-height: 1.5; letter-spacing: .13em; text-transform: uppercase; }
+.roundbadge { display: flex; align-items: center; justify-content: center; width: max-content; max-width: 90%; min-height: 18px; padding: 1px 10px; border: 1px solid #cfb78640; border-radius: 99px; background: #192e23e8; color: #f3eddc; box-shadow: 0 2px 6px #160e0a1f; font-size: 9px; font-weight: 700; line-height: 1.5; letter-spacing: .13em; text-transform: uppercase; }
 #topbar > .roundbadge { grid-column: 1 / -1; justify-self: center; }
 .pcard { min-width: 0; padding: 9px 12px 8px; border: 1px solid #ced8cf; border-radius: 16px; background: rgba(249, 249, 241, .94); box-shadow: 0 3px 12px #17352e08; transition: background .2s, border-color .2s, box-shadow .2s; }
 .pcard.active { border-color: #55847b; background: #fffef7; box-shadow: 0 0 0 1px #55847b33, 0 4px 16px #12382e0b; }
