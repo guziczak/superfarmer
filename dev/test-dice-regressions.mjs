@@ -183,4 +183,84 @@ p.document.visibilityState = 'visible'; p.events.get('visibilitychange').forEach
 p.frame();
 check(dice.canvas.calls.drawImage > hiddenPaints && p.rafs.size === 0, 'returning to the tab paints once and sleeps');
 
-console.log('OK: ' + assertions + ' assertions; ' + successfulRolls + '/30 real DiceScene throws; Canvas 2D, timeout, fixed final results, remote playback and hidden/idle rendering.');
+// The new visual bevel is a closed mesh with planar pentagons, wholly inside
+// the unchanged physical hull. Check both regular and deliberately shaved dice.
+function verifyBevel(scene, label) {
+  for (const die of scene.dice) {
+    const geometry = die.mesh.geometry, position = geometry.attributes.position, normal = geometry.attributes.normal;
+    const heights = geometry.userData.sfBevel.heights;
+    const edges = new Map();
+    let inside = true, outward = true, unitNormals = true, planar = true;
+    const keyOf = v => v.toArray().map(n => Math.round(n * 100000)).join(',');
+    for (let i = 0; i < position.count; i += 3) {
+      const vertices = [0, 1, 2].map(j => new THREE.Vector3().fromBufferAttribute(position, i + j));
+      const ns = [0, 1, 2].map(j => new THREE.Vector3().fromBufferAttribute(normal, i + j));
+      const cross = vertices[1].clone().sub(vertices[0]).cross(vertices[2].clone().sub(vertices[0]));
+      outward &&= cross.lengthSq() > 1e-15 && cross.dot(ns[0].clone().add(ns[1]).add(ns[2])) > 0;
+      for (let j = 0; j < 3; j++) {
+        const v = vertices[j], n = ns[j];
+        unitNormals &&= Number.isFinite(v.lengthSq()) && Math.abs(n.length() - 1) < 1e-5;
+        scene.dod.normals.forEach((plane, fi) => { inside &&= new THREE.Vector3().fromArray(plane).dot(v) <= heights[fi] + 1e-5; });
+        if (i < 12 * 5 * 3) {
+          const faceIndex = Math.floor(i / 15), faceNormal = new THREE.Vector3().fromArray(scene.dod.normals[faceIndex]);
+          planar &&= Math.abs(faceNormal.dot(v) - heights[faceIndex]) < 1e-5 && n.distanceTo(faceNormal) < 1e-5;
+        }
+        const edgeKey = [keyOf(v), keyOf(vertices[(j + 1) % 3])].sort().join('|');
+        edges.set(edgeKey, (edges.get(edgeKey) || 0) + 1);
+      }
+    }
+    check(unitNormals && outward, label + ': finite vertices, unit normals, outward nondegenerate faces');
+    check(inside && planar, label + ': all twelve faces remain planar and the bevel stays inside the physical hull');
+    check([...edges.values()].every(count => count === 2), label + ': visual mesh is watertight');
+    check(position.count < 5000, label + ': the detailed bevel keeps a small mesh');
+  }
+}
+verifyBevel(dice, 'regular dice');
+for (const d of dice.dice) {
+  check(d.body.shapes[0].vertices.length === 20 && d.body.shapes[0].faces.length === 12, 'collision hull remains a dodecahedron');
+  check(d.body.shapes[0].vertices.every((v, i) => new THREE.Vector3(v.x, v.y, v.z).divideScalar(dice.U).distanceTo(new THREE.Vector3().fromArray(dice.dod.verts[i])) < 1e-9), 'visual bevel never alters collision vertices');
+  const shader = { uniforms: {}, vertexShader: THREE.ShaderLib.physical.vertexShader, fragmentShader: THREE.ShaderLib.physical.fragmentShader };
+  d.mesh.material.onBeforeCompile(shader);
+  check(shader.vertexShader.includes('sfPos = position;') && shader.fragmentShader.includes('float flatMask = smoothstep('), 'production shader inserts flat face artwork');
+  check(shader.uniforms.uFaceSym.value.every((index, i) => index === p.context.SYMBOLS.cellOf(d.symbols[i]).index), 'the shader preserves all twelve symbol assignments');
+  check(shader.uniforms.uMedallionColor.value instanceof THREE.Color && shader.uniforms.uFrameColor.value instanceof THREE.Color, 'medallion and frame colors use Three color management');
+}
+check(dice.dice[0].mesh.material.color.getHexString() === 'f3edde' && dice.dice[1].mesh.material.color.getHexString() === 'df9c32', 'porcelain and amber are visibly distinct materials');
+check((dice.canvas.calls.transform || 0) > 2, 'Canvas projects the actual individual face planes');
+
+const shaved = p.scene({ forceCanvas: true }).dice;
+shaved.setTuning({ m: 's', v: [0.75, -0.65] });
+verifyBevel(shaved, 'shaved dice');
+shaved._running = false; p.rafs.clear();
+
+// HUD reflow must not resize a moving hull or move a frozen result. The layout
+// keeps a conservative envelope and applies extra space only before a new throw.
+const layout = p.scene({ forceCanvas: true, insets: { top: 80, right: 12, bottom: 120, left: 12 } }).dice;
+const pose = scene => scene.dice.map(d => [d.body.position.toArray(), d.body.quaternion.toArray(), d.body.velocity.toArray()]);
+const bounds = scene => JSON.stringify([scene.U, scene.rect, scene.insets]);
+layout.throwAuto();
+const flyingBounds = bounds(layout), flyingPose = pose(layout);
+layout.setInsets({ top: 24, right: 12, bottom: 32, left: 12 });
+check(bounds(layout) === flyingBounds, 'shrinking HUD is deferred during flight');
+assert.deepEqual(pose(layout), flyingPose, 'HUD reflow never moves or changes velocity of flying dice'); assertions++;
+for (let step = 0; step < 120 * 45 && layout.state === 'flying'; step++) {
+  layout._physStep(1 / 120); layout._lockSettledDice(); layout._checkSettle(1 / 120);
+}
+check(layout._hasResult && bounds(layout) === flyingBounds, 'the tray does not expand after a result is accepted');
+const acceptedPose = pose(layout);
+layout.setInsets({ top: 110, right: 12, bottom: 170, left: 12 });
+assert.deepEqual(pose(layout), acceptedPose, 'a larger next-turn dock leaves the accepted result in place'); assertions++;
+check(bounds(layout) === flyingBounds, 'a larger next-turn dock waits for a new throw');
+layout.throwAuto();
+check(layout.insets.top === 110 && layout.insets.bottom === 170, 'pending safe layout is applied before the next throw');
+layout.setRemoteDriven(true);
+layout.applyNetFrame(frame);
+const remoteBounds = bounds(layout), remotePositions = layout.dice.map(d => d.mesh.position.toArray());
+layout.setInsets({ top: 140, right: 12, bottom: 200, left: 12 });
+check(bounds(layout) === remoteBounds, 'HUD reflow is deferred during remote playback');
+assert.deepEqual(layout.dice.map(d => d.mesh.position.toArray()), remotePositions, 'remote transforms remain untouched'); assertions++;
+layout.endRemoteRoll();
+check(layout._hasResult && bounds(layout) === remoteBounds, 'remote final frame also keeps its tray layout');
+layout._running = false; p.rafs.clear();
+
+console.log('OK: ' + assertions + ' assertions; ' + successfulRolls + '/30 real DiceScene throws; watertight bevels, planar faces, shader artwork, Canvas projection, deferred HUD, timeout, fixed results, remote playback and hidden/idle rendering.');

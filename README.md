@@ -17,12 +17,16 @@ Na telefonie wygodniej otworzyć grę przez serwer lub hosting. Gra na dwóch ur
 ## Co jest w tej wersji
 
 - Nowy ekran startowy, własna ilustracja SVG i trzy czytelne karty trybów.
+- Przebudowana scena: jasny matowy blat, niska zaokrąglona taca, filc z przeszyciem i znakiem gospodarstwa oraz delikatniejsze światło.
+- Dwie rozróżnialne kostki — porcelanowa i bursztynowa — z płaskimi pięciokątnymi ściankami, wąską zaokrągloną fazą i medalionami.
+- Nowy wspólny zestaw dziewięciu portretów zwierząt na kostkach i w interfejsie.
 - Karty stad z licznikiem zebranych gatunków, paskiem postępu i numerem rundy.
+- Niższe karty graczy oraz kompaktowy panel statusu podczas rzutu, z zachowaniem wygodnych przycisków dotykowych. Zmiana panelu nie przesuwa kostek w locie ani po zatwierdzeniu wyniku.
 - Odświeżone wymiany, zasady, historia, formularze parowania oraz ekran zwycięstwa.
 - Czytelne oznaczenie aktywnego gracza, opisowe etykiety, obsługa klawiatury, zamykanie dialogów przez Escape i przywracanie fokusu.
 - Układ reagujący na szerokość ekranu, obszary bezpieczne telefonu i preferencję ograniczenia animacji.
 - Brak zewnętrznych fontów i plików graficznych wymaganych do rozgrywki.
-- Działająca gra także bez WebGL: widok zgodności Canvas 2D wykorzystuje **ten sam silnik fizyczny, stany kostek i wynik rzutu**.
+- Działająca gra także bez WebGL: widok zgodności Canvas 2D rysuje widoczne pięciokątne ścianki i wykorzystuje **ten sam silnik fizyczny, stany kostek i wynik rzutu**.
 - Renderowanie wstrzymywane w bezruchu; animacje, resize i klatki sieciowe odświeżają scenę na żądanie.
 - Poprawione wznowienie partii, atomowe zapisanie wyniku przed animacją i mocniejszy Zenek.
 - Walidacja danych drugiego telefonu, numerów tur, kursów wymian i stanu zapasów.
@@ -88,11 +92,11 @@ Uruchomione z powodzeniem:
 - 576 wyników rzutów sprawdzonych pod kątem zachowania liczby zwierząt i niezmieniania wejściowych obiektów.
 - 6 regresji natychmiastowej wygranej Zenka i przegląd 2624 stanów, w tym 720 stanów z dostępną wygrywającą wymianą.
 - 17 scenariuszy integracji stanu gry: wznowienie, animacje, wygrana, menu, wiadomości P2P i przerwany rzut.
-- 114 asercji na rzeczywistym module DiceScene, w tym 30 pełnych rzutów, Canvas 2D, stabilność wyniku, resize i odświeżanie w tle/bezruchu.
+- 151 asercji na rzeczywistym module DiceScene, w tym 30 pełnych rzutów, zamknięcie i płaskość nowej siatki, zgodność z fizycznym hullem, Canvas 2D, stabilność wyniku, odraczanie zmian HUD, resize i odświeżanie w tle/bezruchu.
 - 10 kontroli pamięci offline, 7 kontroli wejścia sieciowego i bufora transmisji, 15 scenariuszy cyklu życia połączenia oraz 11 asercji kodowania i odczytu QR.
 - Dotychczasowe testy geometrii, osiadania i blokowania kostek.
 
-Testy fizyki i stanu uruchamiają rzeczywiste moduły gry; platforma przeglądarki, Canvas/DOM i transport są zastępowane w testach. Usługa podglądu przeglądarkowego w środowisku przygotowania tej wersji była niedostępna. Nie wykonano więc końcowej wizualnej weryfikacji w przeglądarce ani rzeczywistego parowania dwóch urządzeń. Testy nie są dowodem statystycznej uczciwości kostek.
+Testy fizyki i stanu uruchamiają rzeczywiste moduły gry; platforma przeglądarki, Canvas/DOM i transport są zastępowane w testach. Nowe symbole i projekcję kostek dodatkowo wyrenderowano rzeczywistym Canvas 2D. Wstawki vertex/fragment shaderów obu materiałów skompilowano i zlinkowano przez OpenGL ES w EGL/Mesa; sprawdza to składnię i zgodność interfejsów, ale nie zastępuje oględzin pełnego renderera WebGL. Przeglądarka kontrolna korzysta z widoku 2D. Bezpośrednia kontrola nowej sceny WebGL na telefonie i rzeczywiste parowanie dwóch urządzeń pozostają do sprawdzenia. Testy nie są dowodem statystycznej uczciwości kostek.
 
 ## Repozytorium i hosting
 

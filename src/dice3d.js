@@ -7,6 +7,10 @@ var DiceScene = (function () {
   'use strict';
 
   var PHI = (1 + Math.sqrt(5)) / 2;
+  var DIE_STYLES = [
+    { body: '#f3edde', medallion: '#fffaf0', frame: '#9f976f', edge: '#d6ccaf' },
+    { body: '#df9c32', medallion: '#fff0c9', frame: '#956128', edge: '#b67d2b' }
+  ];
 
   /* ---------- geometria dwunastościanu (h ścianki = 1) ---------- */
   function buildDodeca() {
@@ -98,160 +102,232 @@ var DiceScene = (function () {
     });
   }
 
-  /* ---------- zaokrąglony mesh przez smooth-max (LogSumExp) ---------- */
-  function buildRoundedGeometry(dod, K, detail, hs) {
-    var geo = new THREE.IcosahedronGeometry(1, detail || 14);
-    var pos = geo.attributes.position;
-    var nrm = new Float32Array(pos.count * 3);
-    var N = dod.normals;
-    var i, f;
-    for (i = 0; i < pos.count; i++) {
-      var ux = pos.getX(i), uy = pos.getY(i), uz = pos.getZ(i);
-      var l = Math.hypot(ux, uy, uz); ux /= l; uy /= l; uz /= l;
-      var d = new Array(12), maxd = -2;
-      for (f = 0; f < 12; f++) {
-        d[f] = (ux * N[f][0] + uy * N[f][1] + uz * N[f][2]) / (hs ? hs[f] : 1);
-        if (d[f] > maxd) maxd = d[f];
-      }
-      var t = 1 / maxd;
-      for (var it = 0; it < 7; it++) {
-        var m = -1e9;
-        for (f = 0; f < 12; f++) { var a = K * (t * d[f] - 1); if (a > m) m = a; }
-        var sum = 0, dsum = 0;
-        for (f = 0; f < 12; f++) {
-          var e = Math.exp(K * (t * d[f] - 1) - m);
-          sum += e; dsum += e * d[f];
-        }
-        var g = (m + Math.log(sum)) / K;   // wartość LSE
-        var gp = dsum / sum;               // pochodna po t
-        t -= g / gp;
-      }
-      // normalna = ważona softmaxem suma normalnych ścianek
-      var m2 = -1e9;
-      for (f = 0; f < 12; f++) { var a2 = K * (t * d[f] - 1); if (a2 > m2) m2 = a2; }
-      var wnx = 0, wny = 0, wnz = 0;
-      for (f = 0; f < 12; f++) {
-        var w = Math.exp(K * (t * d[f] - 1) - m2);
-        wnx += w * N[f][0]; wny += w * N[f][1]; wnz += w * N[f][2];
-      }
-      var wl = Math.hypot(wnx, wny, wnz);
-      pos.setXYZ(i, ux * t, uy * t, uz * t);
-      nrm[i * 3] = wnx / wl; nrm[i * 3 + 1] = wny / wl; nrm[i * 3 + 2] = wnz / wl;
+  /* ---------- płaskie pięciokąty + wąska, rzeczywista faza ---------- */
+  // Hull Cannon zostaje niezmieniony. Wizualna faza leży WEWNĄTRZ jego krawędzi,
+  // a płaskie pola nadal leżą na płaszczyznach n·x = hs (standardowo h = 1).
+  // To suma mniejszego wielościanu i sfery: pola, łuki krawędzi, narożniki.
+  function buildBeveledGeometry(dod, hs, segments) {
+    var heights = hs || dod.normals.map(function () { return 1; });
+    var radius = Math.min.apply(Math, heights) * 0.055;
+    var inner = deformVerts(dod, heights.map(function (h) { return h - radius; }));
+    var steps = segments || 6;
+    var positions = [], normals = [], vertexFaces = dod.verts.map(function () { return []; });
+    var edges = {};
+    function add(p, n) {
+      positions.push(p[0], p[1], p[2]); normals.push(n[0], n[1], n[2]);
     }
-    geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-    geo.attributes.position.needsUpdate = true;
+    function triangle(a, na, b, nb, c, nc) {
+      var ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      var ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      var cross = [ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]];
+      var facing = cross[0] * (na[0] + nb[0] + nc[0]) + cross[1] * (na[1] + nb[1] + nc[1]) + cross[2] * (na[2] + nb[2] + nc[2]);
+      add(a, na);
+      if (facing >= 0) { add(b, nb); add(c, nc); } else { add(c, nc); add(b, nb); }
+    }
+    function point(v, n) { return [v[0] + radius * n[0], v[1] + radius * n[1], v[2] + radius * n[2]]; }
+    function blend(a, b, c, u, v) {
+      var x = a[0] * (1 - u - v) + b[0] * u + c[0] * v;
+      var y = a[1] * (1 - u - v) + b[1] * u + c[1] * v;
+      var z = a[2] * (1 - u - v) + b[2] * u + c[2] * v;
+      var l = Math.hypot(x, y, z); return [x / l, y / l, z / l];
+    }
+    dod.faces.forEach(function (face, fi) {
+      var n = dod.normals[fi], center = [n[0] * heights[fi], n[1] * heights[fi], n[2] * heights[fi]];
+      face.forEach(function (vi, j) {
+        vertexFaces[vi].push(fi);
+        var next = face[(j + 1) % face.length];
+        triangle(center, n, point(inner[vi], n), n, point(inner[next], n), n);
+        var key = Math.min(vi, next) + ':' + Math.max(vi, next);
+        if (!edges[key]) edges[key] = { a: vi, b: next, faces: [] };
+        edges[key].faces.push(fi);
+      });
+    });
+    Object.keys(edges).forEach(function (key) {
+      var edge = edges[key], n0 = dod.normals[edge.faces[0]], n1 = dod.normals[edge.faces[1]];
+      for (var j = 0; j < steps; j++) {
+        var a = blend(n0, n1, n1, j / steps, 0), b = blend(n0, n1, n1, (j + 1) / steps, 0);
+        var va = point(inner[edge.a], a), vb = point(inner[edge.b], a);
+        var vc = point(inner[edge.b], b), vd = point(inner[edge.a], b);
+        triangle(va, a, vb, a, vc, b); triangle(va, a, vc, b, vd, b);
+      }
+    });
+    vertexFaces.forEach(function (faces, vi) {
+      var a = dod.normals[faces[0]], b = dod.normals[faces[1]], c = dod.normals[faces[2]];
+      function patch(i, j) {
+        var n = blend(a, b, c, i / steps, j / steps); return { p: point(inner[vi], n), n: n };
+      }
+      for (var i = 0; i < steps; i++) for (var j = 0; j < steps - i; j++) {
+        var p0 = patch(i, j), p1 = patch(i + 1, j), p2 = patch(i, j + 1);
+        triangle(p0.p, p0.n, p1.p, p1.n, p2.p, p2.n);
+        if (i + j < steps - 1) {
+          var p3 = patch(i + 1, j + 1);
+          triangle(p1.p, p1.n, p3.p, p3.n, p2.p, p2.n);
+        }
+      }
+    });
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geo.computeBoundingBox(); geo.computeBoundingSphere();
+    // Canvas używa tych samych płaskich pól — także po zmianie szlifu.
+    geo.userData.sfBevel = { inner: inner, radius: radius, heights: heights.slice(), hull: hs ? deformVerts(dod, hs) : dod.verts };
     return geo;
   }
 
   /* ---------- materiał kostki z symbolami w shaderze ---------- */
-  function makeDieMaterial(dod, atlasTex, symbols, baseColor) {
+  function makeDieMaterial(dod, atlasTex, symbols, style) {
     var mat = new THREE.MeshPhysicalMaterial({
-      color: baseColor,
-      roughness: 0.42,
-      metalness: 0.0,
-      clearcoat: 0.2,
-      clearcoatRoughness: 0.42,
-      envMapIntensity: 0.5
+      color: style.body, roughness: 0.46, metalness: 0,
+      clearcoat: 0.08, clearcoatRoughness: 0.5, envMapIntensity: 0.36
     });
+    mat.userData.sfStyle = style;
     var faceN = [], faceT = [], faceSym = [];
     for (var i = 0; i < 12; i++) {
       faceN.push(new THREE.Vector3().fromArray(dod.normals[i]));
       faceT.push(new THREE.Vector3().fromArray(dod.tangents[i]));
-      var c = SYMBOLS.cellOf(symbols[i]);
-      faceSym.push(c.index);
+      faceSym.push(SYMBOLS.cellOf(symbols[i]).index);
     }
-    var symbolHalf = dod.faceR * 0.6; // pole symbolu na ściance
+    var symbolHalf = dod.faceR * 0.75;
     mat.onBeforeCompile = function (shader) {
       shader.uniforms.uAtlas = { value: atlasTex };
       shader.uniforms.uFaceN = { value: faceN };
       shader.uniforms.uFaceT = { value: faceT };
       shader.uniforms.uFaceSym = { value: faceSym };
       shader.uniforms.uSymHalf = { value: symbolHalf };
+      shader.uniforms.uFaceR = { value: dod.faceR };
+      shader.uniforms.uFrameColor = { value: new THREE.Color(style.frame) };
+      shader.uniforms.uMedallionColor = { value: new THREE.Color(style.medallion) };
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 sfPos;\nvarying vec3 sfNor;')
         .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nsfNor = normal;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nsfPos = position;');
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 sfPos;\nvarying vec3 sfNor;\nuniform sampler2D uAtlas;\nuniform vec3 uFaceN[12];\nuniform vec3 uFaceT[12];\nuniform float uFaceSym[12];\nuniform float uSymHalf;')
+        .replace('#include <common>', [
+          '#include <common>', 'varying vec3 sfPos;', 'varying vec3 sfNor;',
+          'uniform sampler2D uAtlas;', 'uniform vec3 uFaceN[12];', 'uniform vec3 uFaceT[12];',
+          'uniform float uFaceSym[12];', 'uniform float uSymHalf;', 'uniform float uFaceR;',
+          'uniform vec3 uFrameColor;', 'uniform vec3 uMedallionColor;'
+        ].join('\n'))
         .replace('#include <map_fragment>', [
           'float sfA = 0.0;',
           '{',
           '  int best = 0; float bd = -2.0;',
-          '  for (int i = 0; i < 12; i++) { float d = dot(sfNor, uFaceN[i]); if (d > bd) { bd = d; best = i; } }',
+          '  vec3 sn = normalize(sfNor);',
+          '  for (int i = 0; i < 12; i++) { float d = dot(sn, uFaceN[i]); if (d > bd) { bd = d; best = i; } }',
           '  vec3 fn = uFaceN[best]; vec3 ft = uFaceT[best]; vec3 fb = cross(fn, ft);',
           '  vec3 rel = sfPos - fn;',
-          '  vec2 fuv = vec2(dot(rel, ft), dot(rel, fb)) / (2.0 * uSymHalf) + 0.5;',
-          '  if (fuv.x > 0.01 && fuv.x < 0.99 && fuv.y > 0.01 && fuv.y < 0.99 && bd > 0.972) {',
+          '  vec2 fp = vec2(dot(rel, ft), dot(rel, fb));',
+          '  float flatMask = smoothstep(0.994, 0.9995, bd);',
+          // Stosunek odległości od pięciu krawędzi: 1.0 na brzegu ściany.
+          '  float edge = -2.0;',
+          '  for (int e = 0; e < 5; e++) {',
+          '    float angle = 0.6283185307 + float(e) * 1.2566370614;',
+          '    edge = max(edge, dot(fp, vec2(cos(angle), sin(angle))) / (uFaceR * 0.8090169944));',
+          '  }',
+          '  float medal = (1.0 - smoothstep(0.775, 0.792, edge)) * flatMask;',
+          '  diffuseColor.rgb = mix(diffuseColor.rgb, uMedallionColor, medal * 0.88);',
+          '  float frame = (1.0 - smoothstep(0.009, 0.021, abs(edge - 0.875))) * flatMask;',
+          '  float innerFrame = (1.0 - smoothstep(0.004, 0.012, abs(edge - 0.816))) * flatMask;',
+          '  diffuseColor.rgb = mix(diffuseColor.rgb, uFrameColor, frame * 0.74 + innerFrame * 0.24);',
+          '  vec2 fuv = fp / (2.0 * uSymHalf) + 0.5;',
+          '  if (fuv.x > 0.01 && fuv.x < 0.99 && fuv.y > 0.01 && fuv.y < 0.99 && bd > 0.994) {',
           '    float sy = uFaceSym[best];',
           '    vec2 cell = vec2(mod(sy, 4.0), floor(sy / 4.0));',
           '    vec2 auv = (cell + vec2(fuv.x, 1.0 - fuv.y)) / vec2(4.0, 2.0);',
           '    vec4 tex = texture2D(uAtlas, auv);',
-          '    diffuseColor.rgb = mix(diffuseColor.rgb, tex.rgb, tex.a * 0.97);',
-          '    sfA = tex.a;',
+          '    diffuseColor.rgb = mix(diffuseColor.rgb, tex.rgb, tex.a * flatMask);',
+          '    sfA = tex.a * flatMask;',
           '  }',
           '}'
         ].join('\n'))
-        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, roughnessFactor * 0.92, sfA);');
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.54, sfA);');
     };
-    mat.customProgramCacheKey = function () { return 'sfdie' + symbols.join(''); };
+    mat.customProgramCacheKey = function () { return 'sf-tabletop-v2-' + symbols.join(''); };
     return mat;
   }
 
-  /* ---------- tekstury proceduralne stołu ---------- */
-  function makeFeltTexture() {
-    var cv = document.createElement('canvas');
-    cv.width = cv.height = 1024;
-    var c = cv.getContext('2d');
-    c.fillStyle = '#2e5138'; c.fillRect(0, 0, 1024, 1024);
-    var g = c.createRadialGradient(512, 460, 120, 512, 512, 740);
-    g.addColorStop(0, 'rgba(86,140,98,0.30)');
-    g.addColorStop(0.6, 'rgba(60,104,72,0.10)');
-    g.addColorStop(1, 'rgba(16,34,22,0.55)');
-    c.fillStyle = g; c.fillRect(0, 0, 1024, 1024);
-    // włókna filcu
-    for (var i = 0; i < 9000; i++) {
-      var x = Math.random() * 1024, y = Math.random() * 1024;
-      var a = Math.random() * Math.PI, l = 1.5 + Math.random() * 3.2;
-      c.strokeStyle = Math.random() < 0.5 ? 'rgba(255,255,240,0.028)' : 'rgba(0,10,0,0.05)';
-      c.lineWidth = 1;
-      c.beginPath();
-      c.moveTo(x, y);
-      c.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
-      c.stroke();
-    }
-    var t = new THREE.CanvasTexture(cv);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
+  /* ---------- filc, przeszycia i znak pracowni — wspólne dla obu widoków ---------- */
+  function drawFeltArtwork(c, w, h) {
+    var side = Math.min(w, h), inset = side * 0.043;
+    var gradient = c.createRadialGradient(w * 0.48, h * 0.38, side * 0.08, w * 0.5, h * 0.5, Math.max(w, h) * 0.75);
+    gradient.addColorStop(0, '#345f56'); gradient.addColorStop(0.65, '#28534d'); gradient.addColorStop(1, '#204841');
+    c.fillStyle = gradient; c.fillRect(0, 0, w, h);
+    // Stały, drobny splot; kosmetyka nie zużywa losowań przeznaczonych dla gry.
+    c.lineWidth = Math.max(0.45, side / 1800);
+    c.strokeStyle = 'rgba(220,233,211,0.025)';
+    var step = Math.max(3, side / 170);
+    c.beginPath();
+    for (var x = 0; x < w; x += step) { c.moveTo(x, 0); c.lineTo(x, h); }
+    for (var y = 0; y < h; y += step) { c.moveTo(0, y); c.lineTo(w, y); }
+    c.stroke();
+    c.save();
+    roundedRect2D(c, inset, inset, w - inset * 2, h - inset * 2, side * 0.035);
+    c.strokeStyle = 'rgba(221,217,171,0.27)'; c.lineWidth = Math.max(0.8, side * 0.0014);
+    c.setLineDash([side * 0.0065, side * 0.006]); c.stroke(); c.setLineDash([]);
+    roundedRect2D(c, inset * 1.25, inset * 1.25, w - inset * 2.5, h - inset * 2.5, side * 0.028);
+    c.strokeStyle = 'rgba(217,224,193,0.065)'; c.lineWidth = Math.max(0.5, side * 0.0008); c.stroke();
+    // Dyskretny, wektorowy znak: dach, brama i bruzdy pola w okrągłym medalionie.
+    var r = side * 0.16;
+    c.translate(w * 0.5, h * 0.43); c.scale(r, r);
+    c.strokeStyle = 'rgba(224,228,195,0.16)'; c.lineWidth = 0.013;
+    c.beginPath(); c.arc(0, 0, 1, 0, Math.PI * 2); c.stroke();
+    c.beginPath(); c.arc(0, 0, 0.93, -0.78, 0.78); c.arc(0, 0, 0.93, Math.PI - 0.78, Math.PI + 0.78); c.stroke();
+    c.beginPath(); c.moveTo(-0.5, -0.11); c.lineTo(0, -0.51); c.lineTo(0.5, -0.11);
+    c.moveTo(-0.37, -0.19); c.lineTo(-0.37, 0.25); c.lineTo(0.37, 0.25); c.lineTo(0.37, -0.19);
+    c.moveTo(-0.13, 0.25); c.lineTo(-0.13, -0.04); c.quadraticCurveTo(0, -0.19, 0.13, -0.04); c.lineTo(0.13, 0.25);
+    c.moveTo(-0.58, 0.4); c.quadraticCurveTo(0, 0.12, 0.58, 0.4);
+    c.moveTo(-0.48, 0.57); c.quadraticCurveTo(0, 0.33, 0.48, 0.57);
+    c.moveTo(-0.31, 0.71); c.quadraticCurveTo(0, 0.53, 0.31, 0.71); c.stroke();
+    c.beginPath(); c.moveTo(0, -0.77); c.lineTo(0, -0.65); c.moveTo(-0.06, -0.71); c.lineTo(0.06, -0.71); c.stroke();
+    c.restore();
   }
 
-  function makeWoodTexture() {
+  function makeFeltTexture(aspect) {
     var cv = document.createElement('canvas');
-    cv.width = 1024; cv.height = 256;
-    var c = cv.getContext('2d');
-    c.fillStyle = '#7b5029'; c.fillRect(0, 0, 1024, 256);
-    var i;
-    for (i = 0; i < 46; i++) { // słoje
-      var y = Math.random() * 256;
-      var amp = 3 + Math.random() * 9;
-      var tone = Math.random();
-      c.strokeStyle = tone < 0.6 ? 'rgba(46,26,10,' + (0.10 + Math.random() * 0.16) + ')' : 'rgba(214,164,100,' + (0.08 + Math.random() * 0.10) + ')';
-      c.lineWidth = 1 + Math.random() * 2.6;
-      c.beginPath();
-      for (var x = 0; x <= 1024; x += 16) {
-        var yy = y + Math.sin(x / 90 + i * 1.7) * amp + Math.sin(x / 31 + i) * 2;
-        if (x === 0) c.moveTo(x, yy); else c.lineTo(x, yy);
-      }
-      c.stroke();
+    aspect = aspect || 1;
+    cv.width = Math.round(aspect >= 1 ? 1024 : Math.max(256, 1024 * aspect));
+    cv.height = Math.round(aspect >= 1 ? Math.max(256, 1024 / aspect) : 1024);
+    drawFeltArtwork(cv.getContext('2d'), cv.width, cv.height);
+    var t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
+  }
+
+  function makeTableTexture() {
+    var cv = document.createElement('canvas'); cv.width = cv.height = 512;
+    var c = cv.getContext('2d'); c.fillStyle = '#f0ecdf'; c.fillRect(0, 0, 512, 512);
+    // Jasny, matowy papier lniany zamiast ciemnego usłojenia drewna.
+    for (var i = 0; i < 4200; i++) {
+      var x = (i * 137.317) % 512, y = (i * 97.231) % 512;
+      c.fillStyle = i % 3 ? 'rgba(119,115,91,0.035)' : 'rgba(255,255,249,0.18)';
+      c.fillRect(x, y, 0.8, 1.5);
     }
-    for (i = 0; i < 4; i++) { // sęki
-      var kx = 100 + Math.random() * 820, ky = 40 + Math.random() * 176;
-      c.fillStyle = 'rgba(40,22,8,0.5)';
-      c.beginPath(); c.ellipse(kx, ky, 5 + Math.random() * 6, 3 + Math.random() * 3, Math.random(), 0, 7); c.fill();
-    }
-    var t = new THREE.CanvasTexture(cv);
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    return t;
+    var t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+  }
+
+  function roundedShape(w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    var s = new THREE.Shape(), x = -w / 2, y = -h / 2;
+    s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.quadraticCurveTo(x + w, y, x + w, y + r);
+    s.lineTo(x + w, y + h - r); s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    s.lineTo(x + r, y + h); s.quadraticCurveTo(x, y + h, x, y + h - r);
+    s.lineTo(x, y + r); s.quadraticCurveTo(x, y, x + r, y); s.closePath();
+    return s;
+  }
+
+  function trayRing(w, h, corner, band, depth, bevel) {
+    var shape = roundedShape(w + band * 2, h + band * 2, corner + band);
+    shape.holes.push(new THREE.Path(roundedShape(w, h, corner).getPoints(10).reverse()));
+    return new THREE.ExtrudeGeometry(shape, {
+      depth: depth, steps: 1, curveSegments: 10, bevelEnabled: bevel > 0,
+      bevelSegments: 3, bevelSize: bevel, bevelThickness: bevel
+    });
+  }
+
+  function feltGeometry(w, h, corner) {
+    var geo = new THREE.ShapeGeometry(roundedShape(w, h, corner), 10);
+    var pos = geo.attributes.position, uv = geo.attributes.uv;
+    for (var i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / w + 0.5, pos.getY(i) / h + 0.5);
+    return geo;
   }
 
   /* ---------- otoczenie studyjne do odbić (PMREM) ---------- */
@@ -259,7 +335,7 @@ var DiceScene = (function () {
     var scene = new THREE.Scene();
     var geo = new THREE.SphereGeometry(30, 16, 12);
     var bg = new THREE.MeshBasicMaterial({ side: THREE.BackSide });
-    bg.color = new THREE.Color('#241a10');
+    bg.color = new THREE.Color('#d4d9cf');
     scene.add(new THREE.Mesh(geo, bg));
     function box(x, y, z, w, h, col, inten, ry) {
       var m = new THREE.Mesh(
@@ -271,10 +347,10 @@ var DiceScene = (function () {
       if (ry) m.rotateY(ry);
       scene.add(m);
     }
-    box(-7, 8, 5, 9, 6, '#fff2da', 5.2);    // ciepłe "okno" — główne
-    box(6, 7, -4, 6, 4, '#ffd9a4', 2.6);    // softbox
-    box(0, 4, -8, 7, 2, '#b7c8de', 1.4);    // chłodny pasek kontrastu
-    box(0, -6, 0, 12, 12, '#3a2c1c', 0.7);  // odbicie stołu od dołu
+    box(-4, 12, 3, 11, 8, '#fffaf0', 2.4);  // duży, neutralny softbox
+    box(7, 9, -4, 8, 6, '#e6f0ef', 1.5);    // miękkie chłodne dopełnienie
+    box(0, 6, -8, 8, 3, '#ffffff', 1.2);
+    box(0, -6, 0, 14, 14, '#b9c5b3', 0.55);
     var pmrem = new THREE.PMREMGenerator(renderer);
     var env = pmrem.fromScene(scene, 0.035);
     pmrem.dispose();
@@ -368,10 +444,10 @@ var DiceScene = (function () {
     renderer.setSize(W, H, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.08;
+    renderer.toneMappingExposure = 1.0;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.setClearColor('#221910');
+    renderer.setClearColor('#f0ecdf');
     this.renderer = renderer;
 
     var scene = new THREE.Scene();
@@ -379,7 +455,7 @@ var DiceScene = (function () {
     if (!this.compatibilityMode) scene.environment = makeEnvironment(renderer);
 
     var camera = new THREE.PerspectiveCamera(44, W / H, 0.5, 80);
-    var camDist = 15.5, camTilt = 22 * Math.PI / 180;
+    var camDist = 15.5, camTilt = 19 * Math.PI / 180;
     camera.position.set(0, camDist * Math.cos(camTilt), camDist * Math.sin(camTilt));
     camera.lookAt(0, 0, 0);
     this.camera = camera;
@@ -387,19 +463,19 @@ var DiceScene = (function () {
     this._shake = 0;
 
     // światła
-    var hemi = new THREE.HemisphereLight('#ffeccb', '#2c2013', 0.55);
+    var hemi = new THREE.HemisphereLight('#fffdf5', '#97aaa0', 1.15);
     scene.add(hemi);
-    var key = new THREE.DirectionalLight('#ffe6bd', 2.4);
-    key.position.set(-6, 12, 4);
+    var key = new THREE.DirectionalLight('#fff8eb', 1.65);
+    key.position.set(-3.5, 16, 3.5);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
-    key.shadow.radius = 7;
+    key.shadow.radius = 5;
     key.shadow.bias = -0.0002;
     key.shadow.normalBias = 0.02;
     key.shadow.camera.far = 40;
     scene.add(key);
     this._key = key;
-    var fill = new THREE.DirectionalLight('#9fb4cc', 0.35);
+    var fill = new THREE.DirectionalLight('#dcebee', 0.48);
     fill.position.set(7, 6, -5);
     scene.add(fill);
 
@@ -429,44 +505,25 @@ var DiceScene = (function () {
     this._computeRect();
     var U = this.U = this._idealU();
 
-    // stół: blat + filc + ramka
-    var tableTex = makeWoodTexture();
-    tableTex.repeat.set(3, 3);
-    var table = new THREE.Mesh(
-      new THREE.PlaneGeometry(90, 90),
-      new THREE.MeshStandardMaterial({ map: tableTex, roughness: 0.8, metalness: 0, envMapIntensity: 0.25, color: '#8a6a44' })
-    );
-    table.rotation.x = -Math.PI / 2;
-    table.position.y = -0.06;
-    table.receiveShadow = true;
-    scene.add(table);
+    // Matowy jasny blat i płytka taca z ciągłym, zaokrąglonym obrzeżem.
+    var tableTex = makeTableTexture(); tableTex.repeat.set(7, 7);
+    var table = new THREE.Mesh(new THREE.PlaneGeometry(90, 90),
+      new THREE.MeshStandardMaterial({ map: tableTex, roughness: 1, metalness: 0, envMapIntensity: 0.12 }));
+    table.rotation.x = -Math.PI / 2; table.receiveShadow = true;
+    scene.add(table); this.table = table;
 
-    var felt = new THREE.Mesh(
-      new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshStandardMaterial({ map: makeFeltTexture(), roughness: 0.96, metalness: 0, envMapIntensity: 0.18 })
-    );
-    felt.rotation.x = -Math.PI / 2;
-    felt.receiveShadow = true;
-    scene.add(felt);
-    this.felt = felt;
+    var felt = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0, envMapIntensity: 0.12 }));
+    felt.rotation.x = -Math.PI / 2; felt.receiveShadow = true;
+    scene.add(felt); this.felt = felt;
 
-    var woodTex = makeWoodTexture();
-    woodTex.repeat.set(2.2, 0.35);
-    this._rimMat = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.55, metalness: 0, envMapIntensity: 0.55, color: '#a87c4e' });
-    this._lipMat = new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0, envMapIntensity: 0.7, color: '#c39a66' });
-    this.rims = [];
-    this.lips = [];
-    for (var r = 0; r < 4; r++) {
-      var rim = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this._rimMat);
-      rim.castShadow = true;
-      rim.receiveShadow = true;
-      scene.add(rim);
-      this.rims.push(rim);
-      var lip = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this._lipMat);
-      lip.receiveShadow = true;
-      scene.add(lip);
-      this.lips.push(lip);
-    }
+    this._rimMat = new THREE.MeshStandardMaterial({ roughness: 0.68, metalness: 0, envMapIntensity: 0.22, color: '#e9e2ce' });
+    this._lipMat = new THREE.MeshStandardMaterial({ roughness: 0.54, metalness: 0.28, envMapIntensity: 0.35, color: '#b6a478' });
+    this._rimMesh = new THREE.Mesh(new THREE.BufferGeometry(), this._rimMat);
+    this._lipMesh = new THREE.Mesh(new THREE.BufferGeometry(), this._lipMat);
+    this._rimMesh.rotation.x = this._lipMesh.rotation.x = -Math.PI / 2;
+    this._rimMesh.receiveShadow = true; this._lipMesh.receiveShadow = true;
+    scene.add(this._rimMesh); scene.add(this._lipMesh);
     this.wallBodies = [];
     for (var wb = 0; wb < 5; wb++) { // 4 ściany + sufit
       var body = new CANNON.Body({ mass: 0, material: wallMat });
@@ -483,7 +540,7 @@ var DiceScene = (function () {
     atlasTex.flipY = false;
     this._atlasTex = atlasTex;
 
-    var geo = buildRoundedGeometry(dod, 13, 14);
+    var geo = buildBeveledGeometry(dod);
     this._baseGeo = geo;
     var makeHull = function (u) {
       return new CANNON.ConvexPolyhedron({
@@ -495,11 +552,11 @@ var DiceScene = (function () {
 
     this.dice = [];
     var defs = [
-      { symbols: opts.symbolsA, color: '#f4ecd9' },
-      { symbols: opts.symbolsB, color: '#f6e8c9' }
+      { symbols: opts.symbolsA, style: DIE_STYLES[0] },
+      { symbols: opts.symbolsB, style: DIE_STYLES[1] }
     ];
     for (var d = 0; d < 2; d++) {
-      var mat = makeDieMaterial(dod, atlasTex, defs[d].symbols, defs[d].color);
+      var mat = makeDieMaterial(dod, atlasTex, defs[d].symbols, defs[d].style);
       var mesh = new THREE.Mesh(geo, mat);
       mesh.scale.setScalar(U);
       mesh.castShadow = true;
@@ -586,89 +643,119 @@ var DiceScene = (function () {
   P._drawCompatibility = function (ctx, width, height, ratio) {
     if (!this.camera || !this.dice) return;
     var ins = this.insets, self = this;
-    var left = Math.min(width - 30, Math.max(12, ins.left + 10));
-    var top = Math.min(height - 30, Math.max(12, ins.top + 10));
-    var tw = Math.max(24, width - left - Math.max(12, ins.right + 10));
-    var th = Math.max(24, height - top - Math.max(12, ins.bottom + 10));
+    var left = Math.min(width - 30, Math.max(16, ins.left + 16));
+    var top = Math.min(height - 30, Math.max(16, ins.top + 16));
+    var tw = Math.max(24, width - left - Math.max(16, ins.right + 16));
+    var th = Math.max(24, height - top - Math.max(16, ins.bottom + 16));
     var key = [width, height, left, top, tw, th, ratio].join(':');
     var bg = this._canvasBackground;
     if (!bg || bg.key !== key) {
       var cv = document.createElement('canvas');
       cv.width = Math.round(width * ratio); cv.height = Math.round(height * ratio);
-      var c = cv.getContext('2d');
-      c.setTransform(ratio, 0, 0, ratio, 0, 0);
-      c.fillStyle = '#edf0e7'; c.fillRect(0, 0, width, height);
+      var c = cv.getContext('2d'); c.setTransform(ratio, 0, 0, ratio, 0, 0);
+      c.fillStyle = '#f0ecdf'; c.fillRect(0, 0, width, height);
+      c.fillStyle = 'rgba(143,132,105,0.035)';
+      for (var dot = 0; dot < 2200; dot++) c.fillRect((dot * 137.317) % width, (dot * 97.231) % height, 0.8, 1.5);
       c.save();
-      c.shadowColor = 'rgba(18,42,31,0.18)'; c.shadowBlur = 24; c.shadowOffsetY = 6;
-      roundedRect2D(c, left - 3, top - 3, tw + 6, th + 6, 27);
-      c.fillStyle = '#a88950'; c.fill();
-      c.restore();
-      var felt = c.createLinearGradient(left, top, left + tw * 0.5, top + th);
-      felt.addColorStop(0, '#315b48'); felt.addColorStop(0.52, '#234937'); felt.addColorStop(1, '#183c2e');
-      roundedRect2D(c, left, top, tw, th, 24);
-      c.fillStyle = felt; c.fill();
-      c.save(); c.clip();
-      // Delikatny, nieruchomy splot filcu, rysowany tylko po zmianie rozmiaru.
-      c.fillStyle = 'rgba(233,239,210,0.055)';
-      for (var y = top + 8; y < top + th; y += 12) {
-        for (var x = left + 8; x < left + tw; x += 14) c.fillRect(x, y, 1, 1);
-      }
-      c.restore();
-      roundedRect2D(c, left + 10, top + 10, Math.max(2, tw - 20), Math.max(2, th - 20), 17);
-      c.strokeStyle = 'rgba(211,220,173,0.17)'; c.lineWidth = 1; c.stroke();
+      c.shadowColor = 'rgba(42,62,48,0.12)'; c.shadowBlur = 10; c.shadowOffsetY = 3;
+      roundedRect2D(c, left - 7, top - 7, tw + 14, th + 14, 24);
+      c.fillStyle = '#e4dcc5'; c.fill(); c.restore();
+      roundedRect2D(c, left - 5, top - 5, tw + 10, th + 10, 22);
+      c.fillStyle = '#faf6e9'; c.fill(); c.lineWidth = 0.8; c.strokeStyle = '#bdad83'; c.stroke();
+      c.save(); roundedRect2D(c, left, top, tw, th, 18); c.clip();
+      c.translate(left, top); drawFeltArtwork(c, tw, th); c.restore();
+      roundedRect2D(c, left, top, tw, th, 18);
+      c.strokeStyle = 'rgba(21,54,46,0.24)'; c.lineWidth = 1; c.stroke();
       this._canvasBackground = bg = { key: key, canvas: cv };
     }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, width * ratio, height * ratio);
-    ctx.drawImage(bg.canvas, 0, 0);
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, width * ratio, height * ratio);
+    ctx.drawImage(bg.canvas, 0, 0); ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     this.camera.updateMatrixWorld(true);
     function project(v) {
-      var p = new THREE.Vector3(v.x, v.y, v.z).project(self.camera);
+      var p = v.clone().project(self.camera);
       return { x: (p.x + 1) * width / 2, y: (1 - p.y) * height / 2 };
     }
-    var ordered = this.dice.map(function (d, i) { return { d: d, i: i, p: project(d.mesh.position) }; });
-    ordered.sort(function (a, b) { return a.p.y - b.p.y; });
+    function polygon(points, center, scale) {
+      ctx.beginPath();
+      points.forEach(function (p, i) {
+        var x = center.x + (p.x - center.x) * scale, y = center.y + (p.y - center.y) * scale;
+        if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      });
+      ctx.closePath();
+    }
+    function shade(hex, light) {
+      var value = parseInt(hex.slice(1), 16);
+      return 'rgb(' + [value >> 16, value >> 8 & 255, value & 255].map(function (v) { return Math.min(255, Math.round(v * light)); }).join(',') + ')';
+    }
+    var light = new THREE.Vector3(-0.22, 0.94, 0.25).normalize();
+    var ordered = this.dice.map(function (d, i) {
+      return { d: d, i: i, depth: d.mesh.position.clone().applyMatrix4(self.camera.matrixWorldInverse).z };
+    });
+    ordered.sort(function (a, b) { return a.depth - b.depth; });
     ordered.forEach(function (entry) {
-      var d = entry.d, i = entry.i, pos = d.mesh.position, p = entry.p;
-      var right = project({ x: pos.x + self.U, y: pos.y, z: pos.z });
-      var r = Math.max(21, Math.min(75, Math.abs(right.x - p.x) * 1.15));
-      var ground = project({ x: pos.x, y: 0, z: pos.z });
-      var lift = Math.max(0, pos.y / self.U - 1);
-      ctx.save();
-      ctx.fillStyle = 'rgba(3,19,12,' + Math.max(0.1, 0.28 - lift * 0.025) + ')';
-      ctx.beginPath(); ctx.ellipse(ground.x, ground.y + r * 0.13, r * (0.95 + lift * 0.025), r * 0.44, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
-      var q = d.mesh.quaternion;
-      var yaw = Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.z * q.z));
-      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(yaw);
-      ctx.shadowColor = 'rgba(6,22,14,0.24)'; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
-      roundedRect2D(ctx, -r, -r, r * 2, r * 2, r * 0.38);
-      var cream = ctx.createLinearGradient(-r, -r, r, r);
-      cream.addColorStop(0, i === 0 ? '#fffaf0' : '#f7ddb0');
-      cream.addColorStop(1, i === 0 ? '#e8dbc0' : '#d7ad70');
-      ctx.fillStyle = cream; ctx.fill();
-      ctx.shadowColor = 'transparent';
-      ctx.strokeStyle = i === 0 ? '#fffdf5' : '#f9e6bd'; ctx.lineWidth = 1.7; ctx.stroke();
-      roundedRect2D(ctx, -r + 5, -r + 5, r * 2 - 10, r * 2 - 10, r * 0.31);
-      ctx.strokeStyle = 'rgba(106,80,37,0.16)'; ctx.lineWidth = 1; ctx.stroke();
-      var best = 0, bestDot = -2, n = new THREE.Vector3();
-      for (var f = 0; f < 12; f++) {
-        n.fromArray(self.dod.normals[f]).applyQuaternion(q);
-        if (n.y > bestDot) { bestDot = n.y; best = f; }
-      }
-      var symbol = d.symbols[best], atlas = self.opts.atlasCanvas;
-      if (atlas) {
-        var cell = SYMBOLS.cellOf(symbol), cw = atlas.width / 4, ch = atlas.height / 2;
-        ctx.drawImage(atlas, cell.col * cw, cell.row * ch, cw, ch, -r * 0.92, -r * 0.92, r * 1.84, r * 1.84);
-      } else {
-        SYMBOLS.drawAnimal(ctx, symbol, -r * 0.7, -r * 0.7, r * 1.4);
-      }
-      if (self.mode === 'w' && Math.abs(self.bias[i]) > 0.004) {
-        ctx.beginPath(); ctx.arc(r * 0.66, -r * 0.66, r * 0.075, 0, Math.PI * 2);
-        ctx.fillStyle = '#ad8134'; ctx.fill(); ctx.strokeStyle = '#f8e7a6'; ctx.stroke();
-      }
-      ctx.restore();
+      var d = entry.d, style = DIE_STYLES[entry.i], pos = d.mesh.position, q = d.mesh.quaternion;
+      var data = d.mesh.geometry.userData.sfBevel, U = d.mesh.scale.x;
+      if (!data) return;
+      function world(v) { return new THREE.Vector3().fromArray(v).multiplyScalar(U).applyQuaternion(q).add(pos); }
+      var center = project(pos), right = project(pos.clone().add(new THREE.Vector3(U, 0, 0)));
+      var size = Math.abs(right.x - center.x);
+      var ground = project(new THREE.Vector3(pos.x, 0, pos.z));
+      var lift = Math.max(0, pos.y / U - 1);
+      ctx.save(); ctx.shadowColor = 'rgba(9,31,24,0.11)'; ctx.shadowBlur = 6 + lift * 2;
+      ctx.fillStyle = 'rgba(9,31,24,' + Math.max(0.055, 0.15 - lift * 0.013) + ')';
+      ctx.beginPath(); ctx.ellipse(ground.x + size * 0.08, ground.y + size * 0.1, size * (1.14 + lift * 0.03), size * 0.66, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      var faces = [];
+      self.dod.faces.forEach(function (face, fi) {
+        var localN = self.dod.normals[fi], normal = new THREE.Vector3().fromArray(localN).applyQuaternion(q);
+        var localCenter = [localN[0] * data.heights[fi], localN[1] * data.heights[fi], localN[2] * data.heights[fi]];
+        var fc = world(localCenter), view = self.camera.position.clone().sub(fc);
+        if (normal.dot(view) <= 0) return;
+        var outer = face.map(function (vi) { return project(world(data.hull[vi])); });
+        var flat = face.map(function (vi) {
+          var v = data.inner[vi];
+          return project(world([v[0] + localN[0] * data.radius, v[1] + localN[1] * data.radius, v[2] + localN[2] * data.radius]));
+        });
+        faces.push({ fi: fi, center: project(fc), world: fc, normal: normal, outer: outer, flat: flat,
+          shade: 0.76 + 0.24 * Math.max(0, normal.dot(light)), depth: fc.clone().applyMatrix4(self.camera.matrixWorldInverse).z });
+      });
+      faces.sort(function (a, b) { return a.depth - b.depth; });
+      faces.forEach(function (face) {
+        ctx.save(); ctx.lineJoin = 'round';
+        polygon(face.outer, face.center, 1); ctx.fillStyle = shade(style.edge, Math.min(1.1, face.shade + 0.12));
+        ctx.fill(); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 0.75; ctx.stroke();
+        polygon(face.flat, face.center, 1); ctx.fillStyle = shade(style.body, face.shade); ctx.fill();
+        polygon(face.flat, face.center, 0.82); ctx.fillStyle = shade(style.medallion, face.shade); ctx.fill();
+        polygon(face.flat, face.center, 0.93); ctx.lineWidth = Math.max(0.45, size * 0.014); ctx.strokeStyle = shade(style.frame, face.shade); ctx.globalAlpha = 0.65; ctx.stroke();
+        polygon(face.flat, face.center, 0.865); ctx.lineWidth = Math.max(0.35, size * 0.007); ctx.globalAlpha = 0.38; ctx.stroke();
+        ctx.globalAlpha = 1;
+        // Rzut stycznych tej samej płaszczyzny co w shaderze. Znaki obracają się
+        // razem z bryłą, również w transmisji; żadnego zgadywania ścianki w górze.
+        polygon(face.flat, face.center, 0.84); ctx.clip();
+        var tangent = new THREE.Vector3().fromArray(self.dod.tangents[face.fi]).applyQuaternion(q);
+        var bitangent = new THREE.Vector3().crossVectors(face.normal, tangent);
+        var half = self.dod.faceR * 0.75 * U;
+        var px = project(face.world.clone().addScaledVector(tangent, half));
+        var py = project(face.world.clone().addScaledVector(bitangent, half));
+        var ax = px.x - face.center.x, ay = px.y - face.center.y;
+        var bx = face.center.x - py.x, by = face.center.y - py.y;
+        if (Math.abs(ax * by - ay * bx) > 0.6) {
+          ctx.transform(ax, ay, bx, by, face.center.x, face.center.y);
+          var atlas = self.opts.atlasCanvas, symbol = d.symbols[face.fi];
+          if (atlas) {
+            var cell = SYMBOLS.cellOf(symbol), cw = atlas.width / 4, ch = atlas.height / 2;
+            ctx.drawImage(atlas, cell.col * cw, cell.row * ch, cw, ch, -1, -1, 2, 2);
+          } else SYMBOLS.drawAnimal(ctx, symbol, -0.72, -0.72, 1.44);
+        }
+        ctx.restore();
+      });
+      d.plugs.forEach(function (plug, pi) {
+        if (!plug.visible) return;
+        var fi = pi ? d.antiFace : d.predFace;
+        if (!faces.some(function (f) { return f.fi === fi; })) return;
+        var point = project(plug.position.clone().multiplyScalar(U).applyQuaternion(q).add(pos));
+        ctx.beginPath(); ctx.arc(point.x, point.y, Math.max(1.4, size * 0.048), 0, Math.PI * 2);
+        ctx.fillStyle = '#a47b31'; ctx.fill(); ctx.strokeStyle = '#f4df96'; ctx.lineWidth = 0.7; ctx.stroke();
+      });
     });
   };
 
@@ -685,8 +772,8 @@ var DiceScene = (function () {
       var stretch = mode === 's' ? 1 + value * 0.13 : 1;
       c.save(); c.translate(48, 45); c.scale(stretch, 1);
       roundedRect2D(c, -34, -32, 68, 68, 18);
-      c.fillStyle = i === 0 ? 'rgba(255,247,226,0.86)' : 'rgba(236,202,148,0.86)'; c.fill();
-      c.strokeStyle = '#bda26b'; c.lineWidth = 1.5; c.stroke();
+      c.fillStyle = DIE_STYLES[i].body; c.fill();
+      c.strokeStyle = DIE_STYLES[i].frame; c.lineWidth = 1.5; c.stroke();
       c.restore();
       SYMBOLS.drawAnimal(c, this.dice[i].symbols[this.dice[i].predFace], 32, 16, 32);
       c.beginPath(); c.moveTo(25, 62); c.lineTo(71, 62); c.strokeStyle = 'rgba(85,71,40,0.24)'; c.lineWidth = 1; c.stroke();
@@ -716,7 +803,7 @@ var DiceScene = (function () {
       var t = -ray.ray.origin.y / ray.ray.direction.y;
       return ray.ray.origin.clone().addScaledVector(ray.ray.direction, t);
     };
-    var pad = 6;
+    var pad = 14;
     var tl = pt(ins.left + pad, ins.top + pad);
     var tr = pt(W - ins.right - pad, ins.top + pad);
     var bl = pt(ins.left + pad, H - ins.bottom - pad);
@@ -732,8 +819,22 @@ var DiceScene = (function () {
   P._layoutTray = function () {
     var r = this.rect, U = this.U;
     var wallH = U * 2.6, wallT = U * 0.55;
-    this.felt.scale.set(r.w + wallT * 2, r.h + wallT * 2, 1);
-    this.felt.position.set(r.cx, 0, r.cz);
+    var layoutKey = [r.w, r.h, U].join(':');
+    if (this._trayGeometryKey !== layoutKey) {
+      var corner = Math.min(U * 0.38, r.w * 0.12, r.h * 0.12);
+      this.felt.geometry.dispose(); this.felt.geometry = feltGeometry(r.w, r.h, corner);
+      if (this.felt.material.map) this.felt.material.map.dispose();
+      this.felt.material.map = makeFeltTexture(r.w / r.h); this.felt.material.needsUpdate = true;
+      this._rimMesh.geometry.dispose(); this._lipMesh.geometry.dispose();
+      this._rimMesh.geometry = trayRing(r.w, r.h, corner, U * 0.22, U * 0.16, U * 0.035);
+      this._lipMesh.geometry = trayRing(r.w + U * 0.23, r.h + U * 0.23, corner + U * 0.115, U * 0.022, U * 0.005, 0);
+      this._trayGeometryKey = layoutKey;
+    }
+    this.felt.position.set(r.cx, 0.001, r.cz);
+    this._rimMesh.position.set(r.cx, 0, r.cz);
+    this._lipMesh.position.set(r.cx, U * 0.196, r.cz);
+    this.table.position.y = -U * 0.23;
+    // Granice kolizji pozostają dokładnie takie jak w dotychczasowej fizyce.
     var defs = [
       { x: r.cx, z: r.z0 - wallT / 2, sx: r.w + wallT * 2, sz: wallT },
       { x: r.cx, z: r.z1 + wallT / 2, sx: r.w + wallT * 2, sz: wallT },
@@ -741,13 +842,7 @@ var DiceScene = (function () {
       { x: r.x1 + wallT / 2, z: r.cz, sx: wallT, sz: r.h + wallT * 2 }
     ];
     for (var i = 0; i < 4; i++) {
-      var d = defs[i], rim = this.rims[i], body = this.wallBodies[i], lip = this.lips[i];
-      // przednia (dolna na ekranie) listwa niższa, żeby nie zasłaniać i nie świecić
-      var vh = (i === 1) ? wallH * 0.45 : wallH;
-      rim.scale.set(d.sx, vh, d.sz);
-      rim.position.set(d.x, vh / 2 - 0.02, d.z);
-      lip.scale.set(d.sx + 0.02, wallT * 0.22, d.sz + 0.02);
-      lip.position.set(d.x, vh - wallT * 0.1, d.z);
+      var d = defs[i], body = this.wallBodies[i];
       body.shapes[0].halfExtents.set(d.sx / 2, wallH * 2, d.sz / 2);
       body.shapes[0].updateConvexPolyhedronRepresentation();
       body.shapes[0].updateBoundingSphereRadius();
@@ -816,7 +911,7 @@ var DiceScene = (function () {
         faces: this.dod.faces.map(function (f) { return f.slice(); })
       });
       if (d.shapeGeo) d.shapeGeo.dispose();
-      d.shapeGeo = buildRoundedGeometry(this.dod, 13, 14, hs);
+      d.shapeGeo = buildBeveledGeometry(this.dod, hs);
       d.mesh.geometry = d.shapeGeo;
     } else {
       d.hs = null;
@@ -877,6 +972,7 @@ var DiceScene = (function () {
   P.setRemoteDriven = function (on) {
     on = !!on;
     if (this.remote === on) return;
+    if (on) { this._hasResult = false; this._flushInsets(); this._layoutPinned = true; }
     this.remote = on;
     if (on) {
       this._lastNet = null;
@@ -889,6 +985,7 @@ var DiceScene = (function () {
       }
       this.state = 'idle';
     }
+    this._flushInsets();
     this._invalidate();
   };
 
@@ -924,9 +1021,11 @@ var DiceScene = (function () {
       }
     }
     this.remote = false;
+    this._hasResult = true;
     this._lastNet = null;
     for (var j = 0; j < 2; j++) this._lockDie(j);
     this._syncMeshes();
+    this._flushInsets();
     this._invalidate();
   };
 
@@ -955,7 +1054,7 @@ var DiceScene = (function () {
         cam.position.set(0, 0.7, 4.6);
         cam.lookAt(0, 0, 0);
         var die = this.dice[i];
-        var shellMat = makeDieMaterial(this.dod, this._atlasTex, die.symbols, '#' + die.mesh.material.color.getHexString());
+        var shellMat = makeDieMaterial(this.dod, this._atlasTex, die.symbols, die.mesh.material.userData.sfStyle);
         shellMat.transparent = true;
         shellMat.opacity = 0.4;
         shellMat.depthWrite = false;
@@ -997,7 +1096,7 @@ var DiceScene = (function () {
           if (e !== 0) {
             var hs = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
             hs[this.dice[j].antiFace] = hFromS(e);
-            pv.sGeo = buildRoundedGeometry(this.dod, 13, 9, hs);
+            pv.sGeo = buildBeveledGeometry(this.dod, hs, 4);
             pv.shell.geometry = pv.sGeo;
           } else {
             pv.shell.geometry = this._baseGeo;
@@ -1067,7 +1166,25 @@ var DiceScene = (function () {
   };
 
   P.setInsets = function (ins) {
-    this.insets = ins;
+    var next = {};
+    ['top', 'right', 'bottom', 'left'].forEach(function (side) {
+      var value = +(ins && ins[side]); next[side] = Number.isFinite(value) ? Math.max(0, value) : 0;
+    });
+    this._measuredInsets = next;
+    // Rezerwujemy największy HUD z bieżącego rozmiaru okna. Zwijanie docka
+    // nie powiększa tacy przy każdej fazie; zatwierdzone kostki pozostają w miejscu.
+    if (this._layoutPinned) {
+      next = Object.assign({}, next);
+      ['top', 'right', 'bottom', 'left'].forEach(function (side) {
+        next[side] = Math.max(next[side], this.insets[side], this._pendingInsets ? this._pendingInsets[side] : 0);
+      }, this);
+    }
+    // Większy HUD czeka do początku NOWEGO rzutu. W locie ani po odczycie
+    // wyniku nie przesuwamy ścian, hullów, ani transformów z drugiego telefonu.
+    if (this.isBusy() || this.remote || this._hasResult) { this._pendingInsets = next; return; }
+    this._pendingInsets = null;
+    if (['top', 'right', 'bottom', 'left'].every(function (side) { return next[side] === this.insets[side]; }, this)) return;
+    this.insets = next;
     this._computeRect();
     this._resizeDice();
     this._layoutTray();
@@ -1076,7 +1193,17 @@ var DiceScene = (function () {
     this._invalidate();
   };
 
+  P._flushInsets = function () {
+    if (this._pendingInsets && !this.isBusy() && !this.remote && !this._hasResult) {
+      var measured = this._measuredInsets;
+      this.setInsets(this._pendingInsets);
+      this._measuredInsets = measured;
+    }
+  };
+
   P.resize = function () {
+    if (this._measuredInsets) this.insets = Object.assign({}, this._measuredInsets);
+    this._pendingInsets = null;
     var W = this.canvas.clientWidth, H = this.canvas.clientHeight;
     this.renderer.setSize(W, H, false);
     this._computeRect();
@@ -1225,6 +1352,7 @@ var DiceScene = (function () {
     cv.addEventListener('pointerdown', function (e) {
       if (!self.interactive || (self.state !== 'idle' && self.state !== 'held')) return;
       if (self.state === 'idle') {
+        self._hasResult = false; self._flushInsets(); self._layoutPinned = true;
         self._unlockDie(0); self._unlockDie(1);
         if (self._clock) self._clock.getDelta();
         self._hasResult = false;
@@ -1322,6 +1450,8 @@ var DiceScene = (function () {
   };
 
   P.throwAuto = function () {
+    if (!this.isBusy() && !this.remote) { this._hasResult = false; this._flushInsets(); }
+    this._layoutPinned = true;
     var U = this.U, r = this.rect;
     for (var i = 0; i < 2; i++) {
       this._unlockDie(i);
@@ -1343,6 +1473,7 @@ var DiceScene = (function () {
   };
 
   P._startFlight = function () {
+    this._layoutPinned = true;
     this.state = 'flying';
     this._settleTimer = 0;
     this._flightTime = 0;
@@ -1547,6 +1678,7 @@ var DiceScene = (function () {
       var results = [this._faceUp(this.dice[0]).symbol, this._faceUp(this.dice[1]).symbol];
       this._invalidate();
       this.onSettle(results);
+      this._flushInsets();
       return;
     }
     this._settleTimer = 0;
@@ -1565,6 +1697,7 @@ var DiceScene = (function () {
       this._syncMeshes();
       this._invalidate();
       this.onRollError('Kostka utknęła. Rzuć ponownie — ten rzut nie został policzony.');
+      this._flushInsets();
       return;
     }
     this._cockedTries++;
