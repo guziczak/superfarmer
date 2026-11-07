@@ -173,7 +173,7 @@ button, input, textarea, [tabindex] { -webkit-tap-highlight-color: transparent; 
 .chip img { display: block; width: 100%; height: auto; max-width: 25px; }
 .chip .cnt { color: #2e5146; font-size: 14px; font-weight: 750; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .chip.zero { background: #f0f1e9; }
-.chip.zero img { opacity: .6; filter: grayscale(.25); }
+.chip.zero img { opacity: .8; filter: grayscale(.1); }
 .chip.zero .cnt { color: #748475; font-weight: 500; }
 .chip.req::after { content: ""; position: absolute; inset: -1px; border: 1px solid #dbe2d5; border-radius: inherit; pointer-events: none; }
 .chip.done::after { border: 0; }

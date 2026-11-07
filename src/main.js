@@ -962,9 +962,33 @@
     window.__SF = { dice: dice, get state() { return S; } };
   }
 
+  // Atlas i sprite'y powstają dopiero po zdekodowaniu ilustracji. Dzięki temu
+  // ani cache HUD-u, ani tekstura kostek nie mogą zapamiętać pustego obrazu.
+  var artworkLoading = false, booted = false, startChoices = null;
+  function startWithArtwork() {
+    if (artworkLoading || booted) return;
+    artworkLoading = true;
+    var choices = document.getElementById('modeButtons');
+    if (startChoices === null) startChoices = choices.innerHTML;
+    choices.innerHTML = '<p class="sub" role="status">Przygotowuję ilustracje zwierząt…</p>';
+    SYMBOLS.load(function () {
+      if (!artworkLoading || booted) return;
+      artworkLoading = false;
+      booted = true;
+      choices.innerHTML = startChoices;
+      boot();
+    }, function () {
+      if (!artworkLoading || booted) return;
+      artworkLoading = false;
+      choices.innerHTML = '<p class="sub" role="alert">Nie udało się wczytać ilustracji zwierząt.</p>' +
+        '<button id="btnRetryArtwork" type="button" class="btn pri">Spróbuj ponownie</button>';
+      document.getElementById('btnRetryArtwork').onclick = startWithArtwork;
+    });
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', boot);
+    document.addEventListener('DOMContentLoaded', startWithArtwork);
   } else {
-    boot();
+    startWithArtwork();
   }
 })();
