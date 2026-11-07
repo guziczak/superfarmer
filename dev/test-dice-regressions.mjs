@@ -36,6 +36,7 @@ function platform() {
     removeEventListener(type) { this.listeners.delete(type); }
     setAttribute(name, value) { this[name] = value; }
     getAttribute(name) { return this[name]; }
+    getBoundingClientRect() { return this.bounds || { left: 0, top: 0, width: this.clientWidth, height: this.clientHeight }; }
     setPointerCapture() {}
     cloneNode() { const copy = new Canvas(this.clientWidth, this.clientHeight); copy.id = this.id; return copy; }
     toDataURL() { return 'data:image/png;base64,'; }
@@ -123,6 +124,26 @@ check(dice.state === 'held' && p.rafs.size === 1, 'touch wakes the scene');
 dice.canvas.listeners.get('pointerup')(event);
 check(dice.state === 'flying', 'touch release starts the physical throw');
 dice._running = false; p.rafs.clear();
+
+// Moving or scaling the canvas in a scrollable page must not change which
+// world-space point a gesture picks. Exercise the real pointer handlers.
+// Scene setup consumes random values for resting orientations. Keep these
+// layout checks on their own platform so the production-roll RNG is unchanged.
+const pointerPlatform = platform();
+const pointerReference = pointerPlatform.scene({ forceCanvas: true }).dice;
+const pointerOffset = pointerPlatform.scene({ forceCanvas: true }).dice;
+pointerReference.setInteractive(true); pointerOffset.setInteractive(true);
+pointerOffset.canvas.bounds = { left: 37, top: 245, width: 1200, height: 900 };
+pointerReference.canvas.listeners.get('pointerdown')({ pointerId: 7, clientX: 400, clientY: 300, preventDefault() {} });
+pointerOffset.canvas.listeners.get('pointerdown')({ pointerId: 7, clientX: 637, clientY: 695, preventDefault() {} });
+check(pointerReference._holds[7].target.distanceTo(pointerOffset._holds[7].target) < 1e-9,
+  '3D gesture picks the same point in an offset and scaled canvas');
+pointerOffset.canvas.bounds.top = -180;
+pointerReference.canvas.listeners.get('pointermove')({ pointerId: 7, clientX: 420, clientY: 310, preventDefault() {} });
+pointerOffset.canvas.listeners.get('pointermove')({ pointerId: 7, clientX: 667, clientY: 285, preventDefault() {} });
+check(pointerReference._holds[7].target.distanceTo(pointerOffset._holds[7].target) < 1e-9,
+  '3D drag remains aligned after the page scrolls');
+pointerReference._running = false; pointerOffset._running = false; pointerPlatform.rafs.clear();
 
 // The original regression: the time limit may rescue a roll but must never invent a result.
 dice._flightTime = 6.5;

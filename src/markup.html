@@ -11,28 +11,36 @@
   </defs>
 </svg>
 
-<canvas id="scene3d" aria-label="Stół do gry z dwiema kostkami"></canvas>
-<div id="vignette" aria-hidden="true"></div>
-
 <div id="hud">
   <header id="topbar" aria-label="Stada graczy"></header>
   <div id="netdot" hidden role="status"><span class="dot"></span><span id="netdotTxt">online</span></div>
-  <div id="banner" class="display" role="status" aria-live="polite"></div>
-  <div id="dl0" class="dielabel"></div>
-  <div id="dl1" class="dielabel"></div>
-  <div id="swipehint" aria-hidden="true"><div class="dot"></div></div>
+  <div id="tableStage">
+    <canvas id="scene3d" aria-label="Stół do gry z dwiema kostkami 3D. Wyniki rzutów są też zapisane tekstem pod stołem."></canvas>
+    <div id="vignette" aria-hidden="true"></div>
+    <div id="banner" class="display" role="status" aria-live="polite"></div>
+    <div id="dl0" class="dielabel"></div>
+    <div id="dl1" class="dielabel"></div>
+    <div id="swipehint" aria-hidden="true"><div class="dot"></div></div>
+  </div>
   <footer id="dock">
+    <section id="lastRolls" aria-labelledby="lastRollsTitle">
+      <h2 id="lastRollsTitle">Ostatnie rzuty</h2>
+      <div id="lastRollList" role="region" aria-labelledby="lastRollsTitle" tabindex="0"></div>
+    </section>
     <div id="feedwrap">
       <button id="feed" type="button" aria-label="Otwórz historię zdarzeń"></button>
       <div id="hintline" role="status" aria-live="polite"></div>
     </div>
     <div id="actions" aria-label="Twój ruch">
-      <button id="btnMenu" type="button" aria-label="Otwórz menu"><svg class="icon" aria-hidden="true"><use href="#sf-menu"/></svg></button>
+      <button id="btnMenu" type="button" aria-label="Otwórz menu"><svg class="icon" aria-hidden="true"><use href="#sf-menu"/></svg><span>Menu</span></button>
+      <button id="btnReadability" type="button" class="btn sec" aria-haspopup="dialog" aria-controls="sheetReadability"><span class="readability-mark" aria-hidden="true">Aa</span><span>Czytelność</span></button>
       <button id="btnExchange" type="button" class="btn sec">Wymiana</button>
       <button id="btnRoll" type="button" class="btn pri">Rzuć</button>
+      <button id="btnContinue" type="button" class="btn pri" hidden>Dalej</button>
     </div>
   </footer>
 </div>
+<div id="rollAnnouncement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <div id="flash" aria-hidden="true"></div>
 <div id="eventbig" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -66,6 +74,33 @@
   <h2 id="logTitle" class="display">Z życia farmy.</h2>
   <p class="sub">Ostatnie rzuty, wymiany i niespodziewani goście.</p>
   <div class="scroll" id="logContent"></div>
+</section>
+<section id="sheetReadability" class="sheet" role="dialog" aria-modal="true" aria-labelledby="readabilityTitle" tabindex="-1">
+  <div class="grip" aria-hidden="true"></div>
+  <button class="sheet-close" data-close-sheet type="button" aria-label="Zamknij ustawienia czytelności"><svg class="icon" aria-hidden="true"><use href="#sf-close"/></svg></button>
+  <h2 id="readabilityTitle" class="display">Wygodnie przy stole.</h2>
+  <p class="sub">Dostosuj czytelność do siebie. Stół i kostki pozostają w 3D.</p>
+  <div class="scroll readability-settings">
+    <label class="setting-check" for="readableLayout">
+      <input id="readableLayout" type="checkbox" aria-describedby="readableLayoutHelp">
+      <span><strong>Większe karty stad</strong><span class="setting-help" id="readableLayoutHelp">Nazwy zwierząt i duże liczniki. Rozwijaj lub zwijaj stado przyciskiem z imieniem gracza.</span></span>
+    </label>
+    <div class="setting-select">
+      <label for="readabilityScale">Rozmiar tekstu</label>
+      <select id="readabilityScale" aria-describedby="readabilityScaleHelp">
+        <option value="100">100%</option>
+        <option value="125">125%</option>
+        <option value="150">150%</option>
+        <option value="200">200%</option>
+      </select>
+      <p class="setting-help" id="readabilityScaleHelp">Powiększony tekst włącza przewijany układ z większymi kartami.</p>
+    </div>
+    <label class="setting-check" for="readabilityCalm">
+      <input id="readabilityCalm" type="checkbox" aria-describedby="readabilityCalmHelp">
+      <span><strong>Czekaj na przycisk Dalej</strong><span class="setting-help" id="readabilityCalmHelp">Czytaj wynik we własnym tempie. Działa w grze z Zenkiem i przy jednym telefonie. Gra na dwóch telefonach zachowuje wspólne tempo.</span></span>
+    </label>
+    <p id="readabilityNotice" class="readability-notice" role="status" aria-live="polite"></p>
+  </div>
 </section>
 
 <canvas id="confetti" aria-hidden="true"></canvas>
@@ -218,6 +253,7 @@
         </div>
 
         <nav class="linkrow" aria-label="Opcje gry">
+          <button class="link readability-link" id="btnReadability0" type="button" aria-haspopup="dialog" aria-controls="sheetReadability"><span class="readability-mark" aria-hidden="true">Aa</span><span>Czytelność</span></button>
           <button class="link" id="btnRules0" type="button">Jak grać</button>
           <button class="link" id="btnAdv" type="button" aria-controls="advpanel" aria-expanded="false">Kostki</button>
           <button class="link" id="btnSound0" type="button">Dźwięk</button>

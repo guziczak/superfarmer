@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Superfarmer — kontrola czytelności</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 20px; background: #eee9dc; color: #173d2c; font: 16px/1.5 system-ui, sans-serif; }
+  h1 { margin: 0 0 8px; font-size: 24px; }
+  p { margin: 8px 0; max-width: 80ch; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0; }
+  button { min-height: 48px; padding: 10px 16px; border: 2px solid #234d38; border-radius: 8px; background: #fffdf7; color: #173d2c; font: 650 16px/1.3 system-ui, sans-serif; cursor: pointer; }
+  button[aria-pressed="true"] { background: #234d38; color: #fffbed; }
+  :focus-visible { outline: 3px solid #8b4a12; outline-offset: 3px; }
+  #viewportLabel { font-weight: 700; }
+  .viewport { max-width: 100%; overflow: auto; padding: 4px; border: 1px solid #8b9b83; background: #d0d4c5; }
+  #gameFrame { display: block; width: 390px; height: 844px; min-width: 0; max-width: none; margin: 0; border: 0; box-sizing: content-box; background: #2b1f15; }
+  #diagnosticStatus { min-height: 1.5em; font-weight: 650; }
+  #diagnostics { margin: 12px 0 0; padding: 16px; border: 1px solid #8b9b83; background: #fffdf7; color: #173d2c; white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.5 ui-monospace, monospace; }
+  @media (max-width: 420px) { body { padding: 12px; } }
+</style>
+</head>
+<body>
+  <h1>Kontrola czytelności</h1>
+  <p>Każdy przycisk ustawia rzeczywisty viewport gry w ramce. Obraz nie jest pomniejszany przez transformację ani CSS zoom. Ustawienia tekstu, rzuty i menu obsługuj bezpośrednio w grze.</p>
+  <div class="controls" role="group" aria-label="Rozmiar viewportu gry">
+    <button type="button" data-width="320" data-height="640" aria-pressed="false">320 × 640</button>
+    <button type="button" data-width="390" data-height="844" aria-pressed="true">390 × 844</button>
+    <button type="button" data-width="768" data-height="600" aria-pressed="false">768 × 600</button>
+  </div>
+  <p id="viewportLabel">Viewport gry: 390 × 844 CSS px</p>
+  <div class="viewport">
+    <iframe id="gameFrame" src="../index.html?debug=1" width="390" height="844" title="Superfarmer — podgląd do testów czytelności"></iframe>
+  </div>
+  <div class="controls" aria-label="Diagnostyka gry">
+    <button type="button" id="inspect">Sprawdź układ</button>
+    <button type="button" id="reload">Odśwież grę</button>
+  </div>
+  <p id="diagnosticStatus" role="status" aria-live="polite">Gra się wczytuje.</p>
+  <p>Raport rozróżnia elementy dostępne po przewinięciu od kandydatów do obcięcia. To pomiar pomocniczy; nie zastępuje oględzin ekranu ani testów technologii asystujących.</p>
+  <pre id="diagnostics" aria-label="Raport diagnostyczny">Naciśnij „Sprawdź układ”, aby odczytać aktualny stan.</pre>
+<script>
+(function () {
+  'use strict';
+
+  var frame = document.getElementById('gameFrame');
+  var output = document.getElementById('diagnostics');
+  var status = document.getElementById('diagnosticStatus');
+  var presets = Array.prototype.slice.call(document.querySelectorAll('[data-width]'));
+
+  presets.forEach(function (button) {
+    button.addEventListener('click', function () {
+      var width = Number(button.dataset.width), height = Number(button.dataset.height);
+      frame.width = width; frame.height = height;
+      frame.style.width = width + 'px'; frame.style.height = height + 'px';
+      presets.forEach(function (item) { item.setAttribute('aria-pressed', String(item === button)); });
+      document.getElementById('viewportLabel').textContent = 'Viewport gry: ' + width + ' × ' + height + ' CSS px';
+      status.textContent = 'Zmieniono viewport. Naciśnij „Sprawdź układ”, aby odświeżyć raport.';
+    });
+  });
+
+  frame.addEventListener('load', function () {
+    status.textContent = 'Dokument gry wczytany. Możesz sprawdzić układ i renderer.';
+  });
+
+  document.getElementById('reload').addEventListener('click', function () {
+    status.textContent = 'Odświeżanie gry…';
+    frame.contentWindow.location.reload();
+  });
+
+  function rounded(n) { return Math.round(n * 100) / 100; }
+  function bounds(el) {
+    var r = el.getBoundingClientRect();
+    return { x: rounded(r.x), y: rounded(r.y), width: rounded(r.width), height: rounded(r.height), right: rounded(r.right), bottom: rounded(r.bottom) };
+  }
+  function label(el) {
+    return (el.id ? '#' + el.id : el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\s+/).join('.') : '')) +
+      ' — ' + (el.getAttribute('aria-label') || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 100);
+  }
+
+  document.getElementById('inspect').addEventListener('click', function () {
+    try {
+      var win = frame.contentWindow, doc = win.document;
+      var root = doc.documentElement, body = doc.body;
+      if (!body) throw new Error('Dokument gry nie jest jeszcze gotowy.');
+      var sf = win.__SF, dice = sf && sf.dice;
+      var canvas = doc.getElementById('scene3d');
+      function shown(el) {
+        if (!el || !el.getClientRects().length || el.closest('[hidden], [inert], [aria-hidden="true"], .sr-only')) return false;
+        var s = win.getComputedStyle(el), r = el.getBoundingClientRect();
+        return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0' && r.width > 0 && r.height > 0;
+      }
+      function measured(el) {
+        var s = win.getComputedStyle(el);
+        return { element: label(el), bounds: bounds(el), fontSize: s.fontSize, lineHeight: s.lineHeight,
+          color: s.color, backgroundColor: s.backgroundColor, overflowX: s.overflowX, overflowY: s.overflowY,
+          clientWidth: el.clientWidth, scrollWidth: el.scrollWidth, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight };
+      }
+      var keySelectors = '#scene3d, #tableStage, #hud, #topbar, #dock, #lastRolls, #lastRollList, #feed, #hintline, #btnRoll, #btnExchange, #btnContinue, .pcard, .sheet.show, #startov.show';
+      var keyElements = Array.prototype.slice.call(doc.querySelectorAll(keySelectors)).filter(shown).map(measured);
+      var clipped = [], scrollReachable = [];
+      var candidates = Array.prototype.slice.call(doc.querySelectorAll('button, input, select, textarea, summary, label, h1, h2, h3, p, .cnt, .goal-count, .chip-label, .pname, .last-roll-owner, .last-roll-faces, .animal-label, #feed, #hintline, [role="status"]'));
+      candidates.filter(shown).forEach(function (el) {
+        var r = el.getBoundingClientRect(), s = win.getComputedStyle(el), reasons = [];
+        var reachableX = false, reachableY = false;
+        if (el.clientWidth && el.scrollWidth > el.clientWidth + 1 && /^(hidden|clip)$/.test(s.overflowX)) reasons.push('Zawartość szersza niż element z overflow-x:' + s.overflowX);
+        if (el.clientHeight && el.scrollHeight > el.clientHeight + 1 && /^(hidden|clip)$/.test(s.overflowY)) reasons.push('Zawartość wyższa niż element z overflow-y:' + s.overflowY);
+        for (var parent = el.parentElement; parent; parent = parent.parentElement) {
+          var ps = win.getComputedStyle(parent), pr = parent.getBoundingClientRect();
+          if (/^(auto|scroll)$/.test(ps.overflowX) && parent.scrollWidth > parent.clientWidth + 1) reachableX = true;
+          if (/^(auto|scroll)$/.test(ps.overflowY) && parent.scrollHeight > parent.clientHeight + 1) reachableY = true;
+          // Root overflow is reported against the viewport below. Scrollable
+          // containers remain reachable and are not automatically failures.
+          if (parent === root || parent === body) continue;
+          if (/^(hidden|clip)$/.test(ps.overflowX) && (r.left < pr.left - 1 || r.right > pr.right + 1) && !reachableX) reasons.push('Poza obszarem poziomym ' + label(parent));
+          if (/^(hidden|clip)$/.test(ps.overflowY) && (r.top < pr.top - 1 || r.bottom > pr.bottom + 1) && !reachableY) reasons.push('Poza obszarem pionowym ' + label(parent));
+        }
+        var outsideX = r.left < -1 || r.right > win.innerWidth + 1;
+        var outsideY = r.top < -1 || r.bottom > win.innerHeight + 1;
+        if (outsideX && !reachableX) reasons.push('Poza viewportem w poziomie, bez przewijalnego przodka');
+        if (outsideY && !reachableY) reasons.push('Poza viewportem w pionie, bez przewijalnego przodka');
+        if (reasons.length) clipped.push({ element: label(el), bounds: bounds(el), reasons: reasons });
+        else if (outsideX || outsideY) scrollReachable.push({ element: label(el), horizontal: outsideX, vertical: outsideY });
+      });
+      var topbar = doc.getElementById('topbar'), dock = doc.getElementById('dock');
+      var gap = shown(topbar) && shown(dock) ? rounded(dock.getBoundingClientRect().top - topbar.getBoundingClientRect().bottom) : null;
+      var report = {
+        url: win.location.href,
+        viewport: { width: win.innerWidth, height: win.innerHeight, devicePixelRatio: win.devicePixelRatio,
+          visual: win.visualViewport ? { width: rounded(win.visualViewport.width), height: rounded(win.visualViewport.height), scale: win.visualViewport.scale } : null },
+        ui: { rootFontSize: win.getComputedStyle(root).fontSize, data: Object.assign({}, root.dataset),
+          focusedElement: doc.activeElement ? label(doc.activeElement) : null },
+        game: sf && sf.state ? { mode: sf.state.mode, phase: sf.state.phase, currentPlayer: sf.state.cur, round: sf.state.turnCount } : null,
+        renderer: dice ? (dice.compatibilityMode ? 'Canvas 2D (tryb zgodności)' : 'WebGL 3D') : 'Gra jeszcze nie zainicjalizowana',
+        canvas: canvas ? { clientWidth: canvas.clientWidth, clientHeight: canvas.clientHeight, drawingWidth: canvas.width, drawingHeight: canvas.height, bounds: bounds(canvas) } : null,
+        sceneInsets: dice && dice.insets ? Object.assign({}, dice.insets) : null,
+        gapBetweenTopbarAndDock: gap,
+        documentOverflow: { clientWidth: root.clientWidth, scrollWidth: Math.max(root.scrollWidth, body.scrollWidth),
+          clientHeight: root.clientHeight, scrollHeight: Math.max(root.scrollHeight, body.scrollHeight),
+          horizontal: Math.max(root.scrollWidth, body.scrollWidth) > win.innerWidth + 1 },
+        keyElements: keyElements,
+        clippingCandidates: clipped,
+        outsideViewportButScrollable: scrollReachable
+      };
+      output.textContent = JSON.stringify(report, null, 2);
+      status.textContent = report.viewport.width + ' × ' + report.viewport.height + ' CSS px; ' + report.renderer +
+        '; kandydatów do obcięcia: ' + clipped.length + '.';
+    } catch (error) {
+      status.textContent = 'Nie można odczytać układu gry.';
+      output.textContent = error.message + '\nOtwórz ten plik i grę z tego samego serwera HTTP lub HTTPS.';
+    }
+  });
+})();
+</script>
+</body>
+</html>

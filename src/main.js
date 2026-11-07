@@ -23,6 +23,8 @@
   var GEN = 0;         // generacja — unieważnia zawieszone sekwencje po restarcie
   var dice = null;
   var atlas = null;
+  var awaitingContinue = false;
+  var canvasWidth = 0, canvasHeight = 0;
   var DBG = /[?&]debug/.test(location.search);
   function dlog() { if (DBG) console.log.apply(console, ['[SF]'].concat([].slice.call(arguments))); }
 
@@ -59,6 +61,7 @@
       turnCount: 1,
       exchangeUsed: false,
       phase: 'preroll',
+      lastRolls: [null, null],
       stats: { rolls: [0, 0], wolfEaten: [0, 0], foxStolen: [0, 0], dogSaves: [0, 0] }
     };
   }
@@ -81,6 +84,50 @@
 
   function validFacePair(faces) {
     return Array.isArray(faces) && faces.length === 2 && RULES.validFaces(faces[0], faces[1]);
+  }
+
+  function copyHerd(herd) {
+    var out = {};
+    RULES.ANIMALS.forEach(function (animal) { out[animal] = herd[animal]; });
+    return out;
+  }
+
+  // Ostatni wynik obu graczy jest informacją do spokojnego odczytania.
+  // Przechowujemy wejście reguł, żeby przy wznowieniu odtworzyć skutek,
+  // zamiast wyświetlać dowolne opisy lub zdarzenia otrzymane przez sieć.
+  function makeLastRoll(turn, faces, before, stockBefore, result) {
+    result = result || RULES.resolveRoll(before, stockBefore, faces[0], faces[1]);
+    var changes = {};
+    RULES.ANIMALS.forEach(function (animal) { changes[animal] = result.herd[animal] - before[animal]; });
+    return {
+      turn: turn, faces: faces.slice(), before: copyHerd(before), stockBefore: copyHerd(stockBefore),
+      changes: changes, events: JSON.parse(JSON.stringify(result.events))
+    };
+  }
+
+  function readLastRoll(raw, state, player) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) ||
+        !Number.isSafeInteger(raw.turn) || raw.turn < 1 || raw.turn > state.turnCount ||
+        state.stats.rolls[player] < 1 || !validFacePair(raw.faces) ||
+        !RULES.validHerd(raw.before) || !RULES.validHerd(raw.stockBefore) ||
+        RULES.checkWin(raw.before)) return null;
+    var before = copyHerd(raw.before), stockBefore = copyHerd(raw.stockBefore);
+    // W bieżącej rundzie tylko zakończone już tury mogą mieć wynik.
+    var latest = state.turnCount;
+    if ((state.phase === 'preroll' || state.phase === 'rolling') && player >= state.cur) latest--;
+    if (state.phase === 'resolving' && player > state.cur) latest--;
+    if (raw.turn > latest || !RULES.ANIMALS.every(function (animal) {
+      return before[animal] + stockBefore[animal] <= RULES.STOCK_INIT[animal];
+    })) return null;
+    var result = RULES.resolveRoll(before, stockBefore, raw.faces[0], raw.faces[1]);
+    if (!result || !RULES.validHerd(result.herd) || !RULES.validHerd(result.stock)) return null;
+    if (state.phase === 'resolving' && player === state.cur && raw.turn === state.turnCount) {
+      if (raw.faces[0] !== state.resolvedRoll.faces[0] || raw.faces[1] !== state.resolvedRoll.faces[1] ||
+          !RULES.ANIMALS.every(function (animal) {
+            return result.herd[animal] === state.players[player].herd[animal] && result.stock[animal] === state.stock[animal];
+          })) return null;
+    }
+    return makeLastRoll(raw.turn, raw.faces, before, stockBefore, result);
   }
 
   // Zapis i wznowienie P2P mają tę samą granicę zaufania: buduj pełny, nowy
@@ -127,6 +174,12 @@
     }
     var winners = players.filter(function (p) { return RULES.checkWin(p.herd); });
     if (winners.length > 1 || (raw.phase === 'gameover' && winners.length !== 1)) return null;
+    // Uszkodzony opcjonalny opis nie unieważnia prawidłowego stanu partii.
+    // Starsze zapisy i starszy klient protokołu 2 po prostu nie mają historii.
+    out.lastRolls = [null, null];
+    if (Array.isArray(raw.lastRolls) && raw.lastRolls.length === 2) {
+      out.lastRolls = [0, 1].map(function (player) { return readLastRoll(raw.lastRolls[player], out, player); });
+    }
     return out;
   }
 
@@ -226,6 +279,7 @@
   /* ---------- pętla tury ---------- */
   function beginTurn(keepExchange) {
     if (!S) return;
+    awaitingContinue = false;
     var g = GEN;
     S.phase = 'preroll';
     delete S.resolvedRoll;
@@ -251,6 +305,7 @@
       if (!lsGet(LS_TUT)) HUD.swipeHint(true);
       flushNetQ();
     }
+    syncInsets();
   }
 
   function advanceTurn() {
@@ -259,13 +314,39 @@
     beginTurn();
   }
 
+  function calmPlay() {
+    var preferences = HUD.getReadability();
+    return !!S && S.mode !== 'net' && !!(preferences && preferences.calm);
+  }
+
+  function finishResolvedTurn() {
+    if (!S || S.phase !== 'resolving') return;
+    if (RULES.checkWin(curP().herd)) { finishGame(S.cur); return; }
+    if (calmPlay()) {
+      awaitingContinue = true;
+      dice.setInteractive(false);
+      HUD.refresh(S);
+      HUD.setDock('await-next');
+    } else {
+      advanceTurn();
+    }
+  }
+
+  function continueResolvedTurn() {
+    if (!awaitingContinue || !S || S.phase !== 'resolving' || isNet()) return;
+    // Ustaw flagę przed zmianą tury; drugi klik nie może przeskoczyć gracza.
+    awaitingContinue = false;
+    AUDIO.ui();
+    advanceTurn();
+  }
+
   function restoreTurn() {
     for (var i = 0; i < S.players.length; i++) {
       if (RULES.checkWin(S.players[i].herd)) { finishGame(i); return; }
     }
     // Wynik został już zastosowany przed zapisaniem „resolving”. Nie rzucaj
     // ponownie i nie stosuj go drugi raz; pozostała tylko prezentacja wyniku.
-    if (S.phase === 'resolving') advanceTurn();
+    if (S.phase === 'resolving') finishResolvedTurn();
     else beginTurn(true);
   }
 
@@ -387,12 +468,14 @@
       if (!restored || (resume.hostIdx !== 0 && resume.hostIdx !== 1)) return false;
       NETLOCAL = role === 'host' ? resume.hostIdx : 1 - resume.hostIdx;
       GEN++;
+      awaitingContinue = false;
       S = restored;
       S.bias = normTuning(S.bias);
       dice.setTuning(S.bias);
       HUD.hideStart();
       HUD.hideWin();
       HUD.closeSheets();
+      HUD.setViewPlayer(NETLOCAL);
       HUD.buildCards(S);
       HUD.refresh(S);
       HUD.feed({ who: 0, whoName: '', text: 'Wznowiono przerwaną grę (runda ' + S.turnCount + ')' });
@@ -594,6 +677,7 @@
     dlog('resolveRoll cur=', S.cur, 'faces=', faces.join('+'));
     // Zatwierdź całą transakcję logiczną synchronicznie. Animacje poniżej są
     // wyłącznie prezentacją i mogą zostać przerwane bez utraty wyniku.
+    S.lastRolls[player] = makeLastRoll(S.turnCount, faces, p.herd, S.stock, r);
     p.herd = r.herd;
     S.stock = r.stock;
     S.stats.rolls[player]++;
@@ -606,6 +690,8 @@
     S.resolvedRoll = { player: player, turn: S.turnCount, faces: faces.slice() };
     persist();
     dice.setInteractive(false);
+    syncInsets();
+    HUD.showLastRolls(S, player);
     HUD.setDock('resolving');
     HUD.dieLabels(faces, function (i) { return dice.getDieScreenPos(i); });
 
@@ -679,14 +765,14 @@
       return sleep(350);
     }).then(function () {
       if (g !== GEN) return;
-      if (RULES.checkWin(p.herd)) return finishGame(player);
-      advanceTurn();
+      finishResolvedTurn();
     }).catch(function () {});
   }
 
   /* ---------- koniec gry ---------- */
   function finishGame(winner) {
     if (!S || (winner !== 0 && winner !== 1)) return;
+    awaitingContinue = false;
     S.phase = 'gameover';
     delete S.resolvedRoll;
     if (isNet()) clearNetSave(); else lsDel(LS_SAVE);
@@ -719,11 +805,13 @@
   function startGame(mode, names, bias) {
     if (['solo', 'duo', 'net'].indexOf(mode) < 0) return;
     GEN++;
+    awaitingContinue = false;
     S = newState(mode, names, bias);
     dice.setTuning(S.bias);
     HUD.hideStart();
     HUD.hideWin();
     HUD.closeSheets();
+    HUD.setViewPlayer(mode === 'net' ? NETLOCAL : mode === 'solo' ? 0 : null);
     HUD.buildCards(S);
     HUD.refresh(S);
     HUD.feed({ who: 0, whoName: '', text: mode === 'solo' ? 'Nowa gra: Ty kontra Zenek. Powodzenia!' : mode === 'net' ? 'Połączono dwie zagrody. Powodzenia!' : 'Nowa gra na jednym telefonie. Powodzenia!' });
@@ -735,12 +823,14 @@
     var restored = readState(saved);
     if (!restored || restored.mode === 'net') return;
     GEN++;
+    awaitingContinue = false;
     S = restored;
     S.bias = normTuning(S.bias);
     dice.setTuning(S.bias);
     HUD.hideStart();
     HUD.hideWin();
     HUD.closeSheets();
+    HUD.setViewPlayer(S.mode === 'solo' ? 0 : null);
     HUD.buildCards(S);
     HUD.refresh(S);
     HUD.feed({ who: 0, whoName: '', text: 'Wznowiono zapisaną grę (runda ' + S.turnCount + ')' });
@@ -751,6 +841,7 @@
   function backToMenu() {
     persist();
     GEN++;
+    awaitingContinue = false;
     S = null;
     stopNetStream();
     netQ = [];
@@ -776,9 +867,19 @@
   }
 
   /* ---------- insets / resize ---------- */
-  function syncInsets() {
+  function syncInsets(insets) {
     if (!dice) return;
-    dice.setInsets(HUD.measureInsets());
+    dice.setInsets(insets || HUD.measureInsets());
+    var canvas = dice.canvas;
+    var width = canvas.clientWidth, height = canvas.clientHeight;
+    if (!(width > 0 && height > 0) || (width === canvasWidth && height === canvasHeight)) return;
+    // Powiększanie tekstu zmienia też obszar sceny, bez window.resize.
+    // Poczekaj na zatwierdzenie rzutu: zmiana hullów w locie lub podczas
+    // odtwarzania klatek drugiego telefonu mogłaby zmienić jego przebieg.
+    if (dice.isBusy() || dice.remote) return;
+    dice.resize();
+    canvasWidth = width;
+    canvasHeight = height;
   }
 
   /* ---------- start aplikacji ---------- */
@@ -795,7 +896,7 @@
         symbolsB: RULES.DIE_B,
         onSettle: function (faces) {
           dlog('onSettle faces=', faces, 'phase=', S && S.phase, 'cur=', S && S.cur);
-          if (!S || S.phase !== 'rolling' || !validFacePair(faces) || (isNet() && !isNetLocalTurn())) return;
+          if (!S || S.phase !== 'rolling' || !validFacePair(faces) || (isNet() && !isNetLocalTurn())) { syncInsets(); return; }
           if (isNetLocalTurn()) {
             sendTurnMessage({ t: 'f', d: dice.getNetFrame() });
             sendTurnMessage({ t: 'set', faces: faces });
@@ -803,7 +904,7 @@
           }
           resolveRoll(faces);
         },
-        onRollError: function (message) { recoverRoll(message, false); },
+        onRollError: function (message) { recoverRoll(message, false); syncInsets(); },
         onImpact: function (kind, strength) {
           AUDIO.knock(kind, strength);
           if (navigator.vibrate && strength > 0.35) { try { navigator.vibrate(strength > 0.7 ? 12 : 6); } catch (e) {} }
@@ -842,8 +943,10 @@
     }
 
     HUD.init({
-      onLayoutChange: function (insets) {
-        if (dice) dice.setInsets(insets);
+      onLayoutChange: syncInsets,
+      onContinue: continueResolvedTurn,
+      onReadabilityChange: function (preferences) {
+        if (awaitingContinue && !preferences.calm) continueResolvedTurn();
       },
       onRollClick: function () {
         if (!S || S.phase !== 'preroll' || isBotTurn() || (isNet() && S.cur !== NETLOCAL)) return;
@@ -944,10 +1047,7 @@
       if (HUD.compatibilityMode) HUD.compatibilityMode(true);
     }
 
-    window.addEventListener('resize', function () {
-      dice.resize();
-      syncInsets();
-    });
+    window.addEventListener('resize', function () { syncInsets(); });
     document.addEventListener('pointerdown', function once() {
       AUDIO.unlock();
     }, { capture: true });

@@ -1343,6 +1343,11 @@ var DiceScene = (function () {
 
     var toWorld = function (px, py, planeY) {
       var W = cv.clientWidth, H = cv.clientHeight;
+      // A readable/zoomed layout can place the same 3D canvas below the herd
+      // panels. Convert viewport pointer coordinates to the canvas itself.
+      var bounds = cv.getBoundingClientRect();
+      px = (px - bounds.left) * W / (bounds.width || W);
+      py = (py - bounds.top) * H / (bounds.height || H);
       var ndc = new THREE.Vector2((px / W) * 2 - 1, -(py / H) * 2 + 1);
       var ray = new THREE.Raycaster();
       self.camera.updateMatrixWorld(true);

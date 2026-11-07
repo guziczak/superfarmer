@@ -22,7 +22,11 @@ Na telefonie wygodniej otworzyć grę przez serwer lub hosting. Gra na dwóch ur
 - Dziewięć naturalistycznych ilustracji zwierząt: poprawione proporcje, modelowanie futra, wełny i skóry oraz czytelne sylwetki. Wspólny zestaw dla nadruków na kostkach i interfejsu, osadzony w HTML i dostępny offline.
 - Ilustracje są dekodowane przed uruchomieniem sceny i HUD-u. Przy błędzie wczytania można ponowić próbę bez utworzenia pustych ikon.
 - Karty stad z licznikiem zebranych gatunków, paskiem postępu i numerem rundy.
-- Niższe karty graczy oraz kompaktowy panel statusu podczas rzutu, z zachowaniem wygodnych przycisków dotykowych. Zmiana panelu nie przesuwa kostek w locie ani po zatwierdzeniu wyniku.
+- Czytelność dla osób słabowidzących: większe karty z nazwami zwierząt, tekst 100–200%, wyższy kontrast oraz jawny napis wskazujący turę. Ustawienia są zapamiętywane na urządzeniu.
+- Ostatni rzut każdego gracza pozostaje zapisany osobno: dwie ścianki, numer rundy i pełny skutek, także po ataku drapieżnika lub wyczerpaniu zapasu. Ruch przeciwnika nie usuwa Twojego wyniku.
+- Opcjonalne spokojne tempo: przycisk **Dalej** po rozstrzygnięciu rzutu w solo i grze przy jednym telefonie. W P2P wyniki również pozostają dostępne, a tury przechodzą automatycznie.
+- Powiększony interfejs przewija się wokół wydzielonego stołu 3D. Zmiany rozmiaru sceny czekają na koniec trwającego rzutu lub transmisji; powiększenie tekstu nie wybiera renderera 2D.
+- Kompaktowy panel statusu podczas rzutu, z zachowaniem wygodnych przycisków dotykowych. Samo zwijanie panelu nie przesuwa kostek w locie ani po zatwierdzeniu wyniku.
 - Odświeżone wymiany, zasady, historia, formularze parowania oraz ekran zwycięstwa.
 - Czytelne oznaczenie aktywnego gracza, opisowe etykiety, obsługa klawiatury, zamykanie dialogów przez Escape i przywracanie fokusu.
 - Układ reagujący na szerokość ekranu, obszary bezpieczne telefonu i preferencję ograniczenia animacji.
@@ -41,10 +45,21 @@ Na telefonie wygodniej otworzyć grę przez serwer lub hosting. Gra na dwóch ur
 - **Rzuć** — automatyczny rzut; przyciski obsługują standardowo Tab, Enter i Spację.
 - **Wymiana** — jedna wymiana przed rzutem, w dowolnym kierunku i dostępnej liczbie sztuk.
 - **Menu → Zapisz i wróć do menu** — zachowuje bieżącą turę. „Wznów grę” nie przyznaje kolejnej wymiany.
+- **Czytelność** — dostępna na starcie, przy stole i w menu. Pozwala powiększyć karty, ustawić rozmiar tekstu oraz włączyć oczekiwanie na **Dalej**. W większych kartach przycisk z imieniem rozwija lub zwija stado.
 - **Escape** — zamyka otwarty panel.
 - **Zaawansowane** — ciężarek lub zmiana kształtu kostek. Wyświetlane częstości są orientacyjnymi wartościami wcześniejszej kalibracji; nie są gwarancją dla dowolnego sposobu rzucania.
 
 Gdy żadna z ograniczonej liczby fizycznych prób ratunkowych nie ustabilizuje kostki, gra prosi o ponowny rzut bez zmiany stada, statystyk ani prawa do wymiany. Wynik nie jest zatwierdzany wyłącznie z powodu upływu czasu.
+
+## Czytelność i stół 3D
+
+Panel **Czytelność** nie zmienia fizyki ani oprawy stołu. Na urządzeniu obsługującym WebGL wciąż oglądasz trójwymiarowe kostki, światło, drewno i filc. Istniejący Canvas 2D pozostaje rozwiązaniem zgodności dla przeglądarek bez WebGL.
+
+Na wąskim lub niskim ekranie, przy większych kartach albo tekście ponad 100% gra przechodzi do układu przewijanego. Nazwy gatunków, liczniki i opisy wyników mogą zajmować więcej miejsca, a stół ma osobny obszar. W zwartym widoku oba ostatnie wyniki są dostępne w przewijalnym panelu „Ostatnie rzuty”, również z klawiatury.
+
+Każdy wynik jest zapisywany razem ze stanem stada przed rozpoczęciem animacji. Zapisane wyniki przetrwają wznowienie gry. Wcześniejsze zapisy bez tej informacji nadal działają; panel uzupełni się po kolejnych rzutach. Czytnik ekranu otrzymuje podsumowanie nowego wyniku raz, bez ponawiania go przy każdym odświeżeniu kart.
+
+Spokojne tempo daje czas na odczyt po każdym rzucie, także rzucie Zenka. Włączenie go nie zmienia rozgrywki na dwóch telefonach; ta zachowuje automatyczne przechodzenie tur.
 
 ## Zapis i zgodność wersji
 
@@ -66,6 +81,8 @@ npm run check     # testy i budowanie
 ```
 
 Można również wywoływać bezpośrednio `node build.mjs` oraz skrypty w `dev/`. Parametr `?debug=1` włącza diagnostykę przepływu tur.
+
+`dev/accessibility.html` osadza grę w rzeczywistych viewportach 320×640, 390×844 i 768×600 CSS px. Pozwala ręcznie sprawdzić powiększony tekst, przewijanie, rozmiar canvasu i aktywny renderer. Otwórz go przez ten sam serwer co grę.
 
 ### Układ projektu
 
@@ -94,9 +111,10 @@ Uruchomione z powodzeniem:
 - 31 pierwotnych asercji reguł oraz dodatkowe przypadki walidacji.
 - 576 wyników rzutów sprawdzonych pod kątem zachowania liczby zwierząt i niezmieniania wejściowych obiektów.
 - 6 regresji natychmiastowej wygranej Zenka i przegląd 2624 stanów, w tym 720 stanów z dostępną wygrywającą wymianą.
-- 19 scenariuszy integracji stanu gry: gotowość ilustracji i ponowienie wczytania, wznowienie, animacje, wygrana, menu, wiadomości P2P i przerwany rzut.
+- 32 scenariusze integracji stanu gry: gotowość ilustracji, wznowienie, animacje, wygrana, P2P, przerwany rzut, niezależne wyniki, spokojne tempo i odraczanie zmiany rozmiaru sceny.
+- 10 scenariuszy rzeczywistego HUD-u: preferencje i błędy pamięci, skalowanie, trwałe wyniki, opisy skutków, bezpieczne nazwy graczy i brak powtarzania komunikatów czytnika ekranu.
 - 9 scenariuszy wczytywania ilustracji: opóźnione dekodowanie, współdzielenie obrazu, błędy i ponowienie, walidacja arkusza, cache sprite'ów i zgodność mapowania atlasu.
-- 162 asercje na rzeczywistym module DiceScene, w tym 30 pełnych rzutów, zamknięcie zaokrąglonej siatki, zgodność powierzchni i normalnych z geometrią K13, ograniczenie do fizycznego hull, Canvas 2D, dopasowanie całej drewnianej ramy do ekranu i HUD-u, stabilność wyniku, odraczanie zmian HUD, resize i odświeżanie w tle/bezruchu.
+- 164 asercje na rzeczywistym module DiceScene, w tym 30 pełnych rzutów, zamknięcie zaokrąglonej siatki, zgodność powierzchni i normalnych z geometrią K13, ograniczenie do fizycznego hull, Canvas 2D, dopasowanie całej drewnianej ramy do ekranu i HUD-u, stabilność wyniku, odraczanie zmian HUD, resize, gesty na przesuniętym lub przewiniętym stole i odświeżanie w tle/bezruchu.
 - 10 kontroli pamięci offline, 7 kontroli wejścia sieciowego i bufora transmisji, 15 scenariuszy cyklu życia połączenia oraz 11 asercji kodowania i odczytu QR.
 - Dotychczasowe testy geometrii, osiadania i blokowania kostek.
 

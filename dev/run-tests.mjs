@@ -7,6 +7,7 @@ const commands = [
   ['dev/test-rules.js'],
   ['dev/test-ai.js'],
   ['dev/test-game-state.js'],
+  ['dev/test-accessibility.mjs'],
   ['dev/test-symbols.mjs'],
   ['dev/test-dice-regressions.mjs'],
   ['dev/test-service-worker.mjs'],

@@ -17,7 +17,85 @@ var HUD = (function () {
   var installPrompt = null;
   var layoutFrame = null;
   var lastLayout = '';
-  var sheetIds = ['sheetEx', 'sheetRules', 'sheetMenu', 'sheetLog'];
+  var sheetIds = ['sheetEx', 'sheetRules', 'sheetMenu', 'sheetLog', 'sheetReadability'];
+  var READABILITY_KEY = 'sf3d.readability.v1';
+  var readability = { readable: false, scale: 100, calm: false };
+  var viewPlayer = 0, cardExpanded = [true, false], currentState = null;
+  var lastRollMarkup = '', autoFlow = false;
+
+  try {
+    var storedReadability = JSON.parse(localStorage.getItem(READABILITY_KEY) || 'null');
+    if (storedReadability && typeof storedReadability === 'object') {
+      readability.readable = storedReadability.readable === true;
+      if ([100, 125, 150, 200].indexOf(storedReadability.scale) >= 0) readability.scale = storedReadability.scale;
+      readability.calm = storedReadability.calm === true;
+    }
+  } catch (e) {}
+
+  function getReadability() {
+    return { readable: readability.readable, scale: readability.scale, calm: readability.calm };
+  }
+
+  function readableLayout() { return document.documentElement.dataset.readable === 'true'; }
+
+  function syncReadabilityRoot() {
+    var root = document.documentElement;
+    var flow = autoFlow || readability.readable || readability.scale > 100 || window.innerWidth < 350 || window.innerHeight < 600;
+    root.dataset.readable = String(flow);
+    root.dataset.uiScale = String(readability.scale);
+    root.style.setProperty('--ui-scale', String(readability.scale / 100));
+  }
+  // Apply a saved layout before DiceScene measures its canvas on first boot.
+  syncReadabilityRoot();
+
+  function syncCardExpansion() {
+    for (var i = 0; i < 2; i++) {
+      var card = $('pcard' + i);
+      if (!card) continue;
+      var expanded = !readableLayout() || cardExpanded[i];
+      card.classList.toggle('collapsed', !expanded);
+      var toggle = card.querySelector('.pcard-toggle');
+      if (toggle) {
+        toggle.setAttribute('aria-expanded', String(expanded));
+        toggle.setAttribute('aria-disabled', String(!readableLayout()));
+        var mark = toggle.querySelector('.pcard-expand');
+        if (mark) mark.textContent = expanded ? '−' : '+';
+      }
+    }
+  }
+
+  function setViewPlayer(player) {
+    viewPlayer = player === 0 || player === 1 ? player : null;
+    cardExpanded = viewPlayer === null ? [true, true] : [viewPlayer === 0, viewPlayer === 1];
+    syncCardExpansion();
+  }
+
+  function syncReadabilityControls() {
+    if ($('readableLayout')) $('readableLayout').checked = readability.readable;
+    if ($('readabilityScale')) $('readabilityScale').value = String(readability.scale);
+    if ($('readabilityCalm')) $('readabilityCalm').checked = readability.calm;
+    if ($('readabilityNotice')) $('readabilityNotice').textContent = currentState && currentState.mode === 'net'
+      ? 'W grze na dwóch urządzeniach tury przechodzą automatycznie. Wyniki obu graczy pozostają dostępne.'
+      : 'Ustawienia czytelności są zapamiętywane na tym urządzeniu.';
+  }
+
+  function updateReadability() {
+    autoFlow = false;
+    readability.readable = $('readableLayout').checked;
+    var scale = Number($('readabilityScale').value);
+    readability.scale = [100, 125, 150, 200].indexOf(scale) >= 0 ? scale : 100;
+    readability.calm = $('readabilityCalm').checked;
+    try { localStorage.setItem(READABILITY_KEY, JSON.stringify(readability)); } catch (e) {}
+    syncReadabilityRoot();
+    syncCardExpansion();
+    if (typeof cb.onReadabilityChange === 'function') cb.onReadabilityChange(getReadability());
+    queueLayout();
+  }
+
+  function openReadability() {
+    syncReadabilityControls();
+    openSheet('sheetReadability');
+  }
 
   function esc(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
@@ -48,7 +126,7 @@ var HUD = (function () {
   }
 
   function spr(sym, px) { return SYMBOLS.sprite(sym, px || 26); }
-  function img(sym, px) { return '<img alt="' + SYMBOLS.NAMES_PL[sym][0] + '" src="' + spr(sym, px) + '">'; }
+  function img(sym, px, decorative) { return '<img alt="' + (decorative ? '' : SYMBOLS.NAMES_PL[sym][0]) + '" src="' + spr(sym, px) + '">'; }
 
   /* ---------- obciążone kostki (tryb zaawansowany) ----------
      Suwak = POŁOŻENIE środka ciężkości wzdłuż osi drapieżnik↔ścianka przeciwległa:
@@ -112,12 +190,22 @@ var HUD = (function () {
   /* ---------- karty graczy ---------- */
   function buildCards(S) {
     resetTransient();
+    currentState = S;
+    lastRollMarkup = '';
+    cardExpanded = viewPlayer === null ? [true, true] : [viewPlayer === 0, viewPlayer === 1];
     var tb = $('topbar');
     tb.innerHTML = '';
     var round = document.createElement('div');
     round.id = 'roundbadge';
     round.className = 'roundbadge';
     tb.appendChild(round);
+    var turn = document.createElement('div');
+    turn.id = 'turnbadge';
+    turn.className = 'turnbadge';
+    turn.setAttribute('role', 'status');
+    turn.setAttribute('aria-live', 'polite');
+    turn.setAttribute('aria-atomic', 'true');
+    tb.appendChild(turn);
     logItems = [];
     for (var i = 0; i < S.players.length; i++) {
       var p = S.players[i];
@@ -128,19 +216,33 @@ var HUD = (function () {
       var chips = '';
       for (var a = 0; a < RULES.ANIMALS.length; a++) {
         var an = RULES.ANIMALS[a];
-        chips += '<div class="chip" data-a="' + an + '">' + img(an, 26) + '<div class="cnt">0</div></div>';
+        chips += '<div class="chip" role="img" data-a="' + an + '" aria-label="' + esc(SYMBOLS.NAMES_PL[an][0]) + ': 0">' + img(an, 88, true) +
+          '<div class="cnt">0</div><span class="chip-label">' + esc(SYMBOLS.NAMES_PL[an][0]) + '</span></div>';
       }
       card.innerHTML =
-        '<div class="prow"><div class="pdot" aria-hidden="true"></div><div class="pname"></div><span class="goal-count"></span></div>' +
-        '<div class="chips">' + chips + '</div>' +
+        '<div class="prow"><button type="button" class="pcard-toggle" aria-controls="herd' + i + '">' +
+        '<span class="pdot" aria-hidden="true"></span><span class="pname"></span><span class="pcard-expand" aria-hidden="true"></span></button>' +
+        '<span class="goal-count"><span class="goal-prefix">Gatunki: </span><span class="goal-value">0</span><span class="goal-suffix"> z 5</span></span></div>' +
+        '<div class="chips" id="herd' + i + '">' + chips + '</div>' +
         '<div class="pgoal"><span class="goal-track" aria-hidden="true"><span class="goal-fill"></span></span></div>';
       card.querySelector('.pname').textContent = p.name;
+      (function (index, button) {
+        button.addEventListener('click', function () {
+          if (!readableLayout()) return;
+          cardExpanded[index] = !cardExpanded[index];
+          syncCardExpansion();
+          queueLayout();
+        });
+      })(i, card.querySelector('.pcard-toggle'));
       tb.appendChild(card);
     }
+    syncCardExpansion();
+    showLastRolls(S);
     queueLayout();
   }
 
   function refresh(S, fx) {
+    currentState = S;
     var tb = $('topbar');
     if ($('roundbadge')) {
       $('roundbadge').textContent = 'Runda ' + S.turnCount;
@@ -148,13 +250,16 @@ var HUD = (function () {
     }
     tb.classList.toggle('lead0', S.cur === 0);
     tb.classList.toggle('lead1', S.cur === 1);
+    var turnText = S.phase === 'gameover' ? 'Koniec gry'
+      : S.cur === viewPlayer ? 'Twoja tura' : 'Tura: ' + S.players[S.cur].name;
+    if ($('turnbadge') && $('turnbadge').textContent !== turnText) $('turnbadge').textContent = turnText;
     for (var i = 0; i < S.players.length; i++) {
       var p = S.players[i];
       var card = $('pcard' + i);
       if (!card) continue;
       var complete = RULES.WIN_ANIMALS.filter(function (animal) { return p.herd[animal] > 0; }).length;
       var goalCount = card.querySelector('.goal-count');
-      goalCount.textContent = complete + '/5';
+      goalCount.querySelector('.goal-value').textContent = complete;
       goalCount.title = complete + ' z 5 gatunków do wygranej';
       goalCount.setAttribute('aria-label', goalCount.title);
       card.querySelector('.goal-fill').style.width = (complete * 20) + '%';
@@ -167,6 +272,7 @@ var HUD = (function () {
         var n = p.herd[an];
         el.querySelector('.cnt').textContent = n;
         el.setAttribute('title', SYMBOLS.NAMES_PL[an][0] + ': ' + n);
+        el.setAttribute('aria-label', SYMBOLS.NAMES_PL[an][0] + ': ' + n);
         el.classList.toggle('zero', n === 0);
         var isWin = RULES.WIN_ANIMALS.indexOf(an) >= 0;
         el.classList.toggle('req', isWin && n === 0);
@@ -178,6 +284,55 @@ var HUD = (function () {
         }
       }
     }
+    showLastRolls(S);
+    queueLayout();
+  }
+
+  /* ---------- stałe wyniki, osobno dla każdego gracza ---------- */
+  function rollEffect(record) {
+    var parts = [], gain = [];
+    (record.events || []).forEach(function (event) {
+      if (event.t === 'fox') parts.push(event.saved ? 'Mały pies przegonił lisa i wrócił do Stada Głównego.'
+        : event.lost ? 'Lis zabrał ' + event.lost + ' ' + SYMBOLS.plural('rabbit', event.lost) + '.'
+        : 'Lis nie zabrał żadnego królika.');
+      if (event.t === 'wolf') parts.push(event.saved ? 'Duży pies przegonił wilka i wrócił do Stada Głównego.'
+        : event.total ? 'Wilk zabrał zwierzęta: ' + Object.keys(event.eaten).filter(function (animal) { return event.eaten[animal] > 0; })
+          .map(function (animal) { return event.eaten[animal] + ' ' + SYMBOLS.plural(animal, event.eaten[animal]); }).join(', ') + '.'
+        : 'Wilk nie zabrał żadnego zwierzęcia.');
+      if (event.t === 'gain' && event.n > 0) gain.push('+' + event.n + ' ' + SYMBOLS.plural(event.animal, event.n));
+    });
+    parts.push(gain.length ? 'Przychówek: ' + gain.join(', ') + '.' : 'Bez przychówku.');
+    if ((record.events || []).some(function (event) { return event.t === 'gain' && event.capped; })) {
+      parts.push('Przychówek ograniczył zapas Stada Głównego.');
+    }
+    return parts.join(' ');
+  }
+
+  function showLastRolls(S, announcePlayer) {
+    currentState = S;
+    var container = $('lastRollList');
+    if (!container || !S) return;
+    var records = S.lastRolls || [null, null];
+    var html = S.players.map(function (player, index) {
+      var record = records[index];
+      var owner = esc(player.name) + (record ? ' · runda ' + record.turn : '');
+      return '<section class="last-roll" aria-label="Ostatni rzut: ' + esc(player.name) + '">' +
+        '<div class="last-roll-owner">' + owner + '</div>' +
+        (record ? '<div class="last-roll-faces">' + record.faces.map(function (symbol) {
+          return '<span>' + img(symbol, 64, true) + '<span>' + esc(SYMBOLS.NAMES_PL[symbol][0]) + '</span></span>';
+        }).join('<span class="roll-plus" aria-hidden="true">+</span>') + '</div><p class="last-roll-effect">' + esc(rollEffect(record)) + '</p>'
+          : '<p class="last-roll-effect">Brak zapisanego rzutu.</p>') + '</section>';
+    }).join('');
+    if (lastRollMarkup !== html) {
+      container.innerHTML = html;
+      lastRollMarkup = html;
+      queueLayout();
+    }
+    if ((announcePlayer === 0 || announcePlayer === 1) && records[announcePlayer] && $('rollAnnouncement')) {
+      var result = records[announcePlayer];
+      $('rollAnnouncement').textContent = S.players[announcePlayer].name + ', runda ' + result.turn + ': ' +
+        result.faces.map(function (symbol) { return SYMBOLS.NAMES_PL[symbol][0]; }).join(' i ') + '. ' + rollEffect(result);
+    }
   }
 
   /* ---------- dok ---------- */
@@ -186,11 +341,12 @@ var HUD = (function () {
     document.documentElement.dataset.phase = mode;
     var dock = $('dock');
     dock.dataset.mode = mode;
-    dock.classList.toggle('compact', mode !== 'preroll-human');
+    dock.classList.toggle('compact', mode !== 'preroll-human' && mode !== 'await-next');
     dock.classList.toggle('has-notice', mode === 'preroll-human' && !!o.hint);
     var ex = $('btnExchange'), roll = $('btnRoll'), hint = $('hintline');
     var show = function (el, on) { el.style.display = on ? '' : 'none'; };
     show(ex, false); show(roll, false);
+    if ($('btnContinue')) $('btnContinue').hidden = mode !== 'await-next';
     hint.textContent = '';
     if (mode === 'preroll-human') {
       show(ex, true); show(roll, true);
@@ -206,6 +362,8 @@ var HUD = (function () {
       hint.textContent = o.text || 'Zenek myśli…';
     } else if (mode === 'resolving') {
       hint.textContent = 'Liczymy przychówek…';
+    } else if (mode === 'await-next') {
+      hint.textContent = 'Wynik zapisany. Wybierz „Dalej”, gdy go przeczytasz.';
     }
     queueLayout();
   }
@@ -222,17 +380,20 @@ var HUD = (function () {
   /* ---------- etykiety kostek ---------- */
   function dieLabels(faces, posFn, ms) {
     clearTimeout(labelTimer);
+    var stage = $('tableStage');
+    var width = stage ? stage.clientWidth : innerWidth;
+    var height = stage ? stage.clientHeight : innerHeight;
     for (var i = 0; i < 2; i++) {
       var el = $('dl' + i);
       if (!faces) { el.classList.remove('show'); continue; }
       var sym = faces[i];
       var pos = posFn(i);
       var bad = (sym === 'wolf' || sym === 'fox');
-      el.innerHTML = img(sym, 22) + '<span>' + SYMBOLS.NAMES_PL[sym][0] + '</span>';
+      el.innerHTML = img(sym, 22, true) + '<span>' + SYMBOLS.NAMES_PL[sym][0] + '</span>';
       el.className = 'dielabel' + (bad ? ' bad' : '');
-      var topbarB = $('topbar').getBoundingClientRect().bottom;
-      el.style.left = Math.min(Math.max(pos.x, 70), innerWidth - 70) + 'px';
-      el.style.top = Math.max(pos.y, topbarB + 64) + 'px';
+      var topbarB = readableLayout() ? 0 : $('topbar').getBoundingClientRect().bottom;
+      el.style.left = Math.min(Math.max(pos.x, 70), width - 70) + 'px';
+      el.style.top = Math.min(height - 8, Math.max(pos.y, topbarB + 64)) + 'px';
       void el.offsetWidth;
       el.classList.add('show');
     }
@@ -291,12 +452,13 @@ var HUD = (function () {
     f.innerHTML = (entry.icon ? img(entry.icon, 20) : '') + '<span></span>';
     f.querySelector('span').textContent = entry.text;
     f.title = entry.text + ' · Otwórz historię gry';
+    f.setAttribute('aria-label', entry.text + '. Otwórz historię gry.');
     queueLayout();
   }
 
   function renderLog() {
     var el = $('logContent');
-    if (!logItems.length) { el.innerHTML = '<p style="color:var(--cream-faint);font-size:14px;padding:8px">Jeszcze nic się nie wydarzyło.</p>'; return; }
+    if (!logItems.length) { el.innerHTML = '<p class="log-empty">Jeszcze nic się nie wydarzyło.</p>'; return; }
     el.innerHTML = logItems.slice().reverse().map(function (e) {
       return '<div class="logrow"><span class="who p' + (e.who === 1 ? 1 : 0) + '">' + esc(e.whoName) + '</span>' +
         (e.icon ? img(e.icon, 18) : '') + '<span>' + esc(e.text) + '</span></div>';
@@ -341,9 +503,9 @@ var HUD = (function () {
     var p = S.players[S.cur];
     var ok = RULES.canExchange(p.herd, S.stock, rate, dir, 1);
     return '<button class="exrow" data-r="' + rate.id + '" data-d="' + dir + '" ' + (ok ? '' : 'disabled') + '>' +
-      '<span class="side"><span class="n">' + giveN + '×</span>' + img(give, 26) + '</span>' +
+      '<span class="side"><span class="n">' + giveN + '×</span><span class="ex-animal">' + img(give, 52, true) + '<span class="animal-label">' + esc(SYMBOLS.NAMES_PL[give][0]) + '</span></span></span>' +
       '<span class="arr">→</span>' +
-      '<span class="side"><span class="n">' + getN + '×</span>' + img(get, 26) + '</span>' +
+      '<span class="side"><span class="n">' + getN + '×</span><span class="ex-animal">' + img(get, 52, true) + '<span class="animal-label">' + esc(SYMBOLS.NAMES_PL[get][0]) + '</span></span></span>' +
       '<span class="bank">masz: ' + p.herd[give] + '<br>w stadzie: ' + S.stock[get] + '</span>' +
       '</button>';
   }
@@ -428,12 +590,13 @@ var HUD = (function () {
       '<div class="dcard"><b>Kostka jasna</b>' + drow('rabbit', 6) + drow('sheep', 3) + drow('pig', 1) + drow('cow', 1) + drow('wolf', 1) + '</div>' +
       '<div class="dcard"><b>Kostka złota</b>' + drow('rabbit', 6) + drow('sheep', 2) + drow('pig', 2) + drow('horse', 1) + drow('fox', 1) + '</div>' +
       '</div>' +
-      '<p style="font-size:12.5px;color:var(--cream-faint)">Pierwszą krowę i konia zdobędziesz tylko wymianą — na kostkach nie ułożysz z nich pary. Stado Główne jest ograniczone: 60 królików, 24 owce, 20 świń, 12 krów, 6 koni, 4 małe psy, 2 duże psy.</p>';
+      '<p class="rules-note">Pierwszą krowę i konia zdobędziesz tylko wymianą — na kostkach nie ułożysz z nich pary. Stado Główne jest ograniczone: 60 królików, 24 owce, 20 świń, 12 krów, 6 koni, 4 małe psy, 2 duże psy.</p>';
   }
 
   /* ---------- menu ---------- */
   function buildMenu(S) {
     $('menuContent').innerHTML =
+      '<button type="button" class="menurow" id="mReadability"><span>Czytelność</span><span class="state">Aa · ' + readability.scale + '%</span></button>' +
       '<button class="menurow" id="mSound"><span>Dźwięk</span><span class="state">' + (AUDIO.isEnabled() ? 'włączony' : 'wyłączony') + '</span></button>' +
       '<button class="menurow" id="mRules"><span>Zasady gry</span><span class="state">›</span></button>' +
       '<button class="menurow" id="mLog"><span>Historia gry</span><span class="state">›</span></button>' +
@@ -441,6 +604,7 @@ var HUD = (function () {
       '<button class="menurow" id="mInstall"' + (installPrompt ? '' : ' hidden') + '><span>Dodaj grę do urządzenia</span><span class="state">↗</span></button>' +
       '<button class="menurow" id="mBack"><span>' + (S && S.mode === 'net' ? 'Opuść grę' : 'Zapisz i wróć do menu') + '</span><span class="state">↗</span></button>' +
       '<button class="menurow" id="mRestart"><span>Nowa gra</span><span class="state">od początku</span></button>';
+    $('mReadability').addEventListener('click', openReadability);
     $('mSound').addEventListener('click', function () {
       cb.onSoundToggle();
       buildMenu(S);
@@ -470,6 +634,7 @@ var HUD = (function () {
   /* ---------- start / wygrana ---------- */
   function showStart(o) {
     resetTransient();
+    currentState = null;
     $('startov').classList.remove('compact');
     $('btnResume').hidden = !o.canResume;
     if (o.canResume && o.resumeLabel) $('btnResume').textContent = o.resumeLabel;
@@ -522,7 +687,7 @@ var HUD = (function () {
       note.id = 'compatNote'; note.className = 'compat-note';
       note.textContent = 'Widok 2D · pełna fizyka';
       note.title = 'Ta przeglądarka korzysta z widoku zgodności. Zasady i fizyka kostek pozostają takie same.';
-      $('hud').appendChild(note);
+      $('tableStage').appendChild(note);
     }
     note.hidden = !on;
   }
@@ -578,6 +743,17 @@ var HUD = (function () {
   /* ---------- init ---------- */
   function init(callbacks) {
     cb = callbacks;
+    syncReadabilityRoot();
+    syncReadabilityControls();
+    ['btnReadability', 'btnReadability0'].forEach(function (id) {
+      $(id).addEventListener('click', function () { AUDIO.ui(); openReadability(); });
+    });
+    ['readableLayout', 'readabilityScale', 'readabilityCalm'].forEach(function (id) {
+      $(id).addEventListener('change', updateReadability);
+    });
+    $('btnContinue').addEventListener('click', function () {
+      if (typeof cb.onContinue === 'function') cb.onContinue();
+    });
     var heroRabbit = $('heroRabbit'), heroSheep = $('heroSheep');
     if (heroRabbit) heroRabbit.setAttribute('href', spr('rabbit', 96));
     if (heroSheep) heroSheep.setAttribute('href', spr('sheep', 96));
@@ -588,8 +764,14 @@ var HUD = (function () {
       var layoutObserver = new ResizeObserver(queueLayout);
       layoutObserver.observe($('topbar'));
       layoutObserver.observe($('dock'));
+      layoutObserver.observe($('tableStage'));
     }
-    window.addEventListener('resize', queueLayout);
+    window.addEventListener('resize', function () {
+      autoFlow = false;
+      syncReadabilityRoot();
+      syncCardExpansion();
+      queueLayout();
+    });
     queueLayout();
     window.addEventListener('beforeinstallprompt', function (event) {
       event.preventDefault(); installPrompt = event;
@@ -734,6 +916,9 @@ var HUD = (function () {
   }
 
   function measureInsets() {
+    // In the readable layout, the 3D canvas has its own place in document flow.
+    // Text panels can grow and scroll without covering the rendered table.
+    if (readableLayout()) return { top: 8, right: 8, bottom: 8, left: 8 };
     var top = $('topbar').getBoundingClientRect();
     var dock = $('dock').getBoundingClientRect();
     // A small breathing space is enough with the thinner tray rim. Reserve only
@@ -751,7 +936,14 @@ var HUD = (function () {
     layoutFrame = requestAnimationFrame(function () {
       layoutFrame = null;
       var insets = measureInsets();
-      var key = insets.top + ':' + insets.bottom + ':' + window.innerWidth + ':' + window.innerHeight;
+      if (!readableLayout() && window.innerHeight - insets.top - insets.bottom < 240) {
+        autoFlow = true;
+        syncReadabilityRoot();
+        syncCardExpansion();
+        insets = measureInsets();
+      }
+      var canvas = $('scene3d');
+      var key = [insets.top, insets.right, insets.bottom, insets.left, canvas.clientWidth, canvas.clientHeight, readableLayout()].join(':');
       document.documentElement.style.setProperty('--hud-top', insets.top + 'px');
       document.documentElement.style.setProperty('--hud-bottom', insets.bottom + 'px');
       if (key === lastLayout) return;
@@ -766,6 +958,9 @@ var HUD = (function () {
     buildCards: buildCards,
     refresh: refresh,
     setDock: setDock,
+    getReadability: getReadability,
+    setViewPlayer: setViewPlayer,
+    showLastRolls: showLastRolls,
     banner: banner,
     dieLabels: dieLabels,
     flash: flash,
