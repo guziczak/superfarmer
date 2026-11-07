@@ -27,6 +27,7 @@ function saved(s) { return new Map([[LOCAL, JSON.stringify(s)]]); }
 
 function browser(storage = new Map(), options = {}) {
   let ui, callbacks, scene, now = 0, timerId = 0;
+  let artworkCallbacks, artworkLoads = 0, atlasCount = 0;
   const timers = new Map(), elements = new Map(), calls = [], sent = [];
   const record = (name, args) => calls.push({ name, args: copy(args) });
   const el = id => {
@@ -77,7 +78,11 @@ function browser(storage = new Map(), options = {}) {
     setInterval() { return ++timerId; }, clearInterval() {},
     HUD, DiceScene,
     SYMBOLS: {
-      buildAtlas() { return {}; }, plural(sym) { return sym; },
+      load(done, onError) {
+        artworkCallbacks = { done, onError }; artworkLoads++;
+        if (!options.deferArtwork) done();
+      },
+      buildAtlas() { atlasCount++; return {}; }, plural(sym) { return sym; },
       NAMES_PL: Object.fromEntries([...RULES.ANIMALS, 'fox', 'wolf'].map(a => [a, [a]]))
     },
     AUDIO: new Proxy({ isEnabled() { return true; } }, {
@@ -106,7 +111,11 @@ function browser(storage = new Map(), options = {}) {
     await microtasks();
   }
   return {
-    ui, scene, calls, sent, storage, document, advance, microtasks,
+    get ui() { return ui; }, get scene() { return scene; },
+    calls, sent, storage, document, advance, microtasks,
+    get artworkLoads() { return artworkLoads; }, get atlasCount() { return atlasCount; },
+    resolveArtwork() { artworkCallbacks.done(); },
+    rejectArtwork() { artworkCallbacks.onError(new Error('Artwork unavailable')); },
     get state() { return context.window.__SF.state; },
     get connection() { return callbacks; },
     peer(m) { callbacks.onMsg(m); },
@@ -126,6 +135,36 @@ async function test(name, run) {
 }
 
 (async () => {
+  await test('boot waits for illustrations before constructing the atlas, scene or HUD', () => {
+    const b = browser(new Map(), { deferArtwork: true });
+    assert.equal(b.ui, undefined);
+    assert.equal(b.scene, undefined);
+    assert.equal(b.atlasCount, 0);
+    assert.match(b.document.getElementById('modeButtons').innerHTML, /Przygotowuję ilustracje/);
+    b.resolveArtwork();
+    assert.ok(b.ui && b.scene);
+    assert.equal(b.atlasCount, 1);
+    const scene = b.scene;
+    b.resolveArtwork();
+    assert.equal(b.scene, scene);
+    assert.equal(b.atlasCount, 1);
+  });
+
+  await test('an illustration load error leaves boot retryable without caching a blank atlas', () => {
+    const b = browser(new Map(), { deferArtwork: true });
+    b.rejectArtwork();
+    assert.equal(b.ui, undefined);
+    assert.equal(b.scene, undefined);
+    assert.equal(b.atlasCount, 0);
+    assert.match(b.document.getElementById('modeButtons').innerHTML, /Nie udało się/);
+    b.document.getElementById('btnRetryArtwork').onclick();
+    assert.equal(b.artworkLoads, 2);
+    assert.equal(b.atlasCount, 0);
+    b.resolveArtwork();
+    assert.ok(b.ui && b.scene);
+    assert.equal(b.atlasCount, 1);
+  });
+
   await test('resume preserves current player, round and the already used exchange', () => {
     const s = position('duo', { cur: 1, turnCount: 4, exchangeUsed: true }, [h({}), h({ rabbit: 12 })]);
     const b = browser(saved(s)); b.ui.onResume();

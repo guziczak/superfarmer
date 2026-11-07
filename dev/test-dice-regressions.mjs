@@ -40,13 +40,21 @@ function platform() {
     cloneNode() { const copy = new Canvas(this.clientWidth, this.clientHeight); copy.id = this.id; return copy; }
     toDataURL() { return 'data:image/png;base64,'; }
   }
+  // These regressions exercise scene/physics behavior. Delayed image decoding
+  // and loader failures are covered separately in test-symbols.mjs.
+  class Image {
+    constructor() { this.naturalWidth = this.naturalHeight = 1536; }
+    set src(value) { this.source = value; if (this.onload) this.onload(); }
+    get src() { return this.source; }
+  }
   const document = {
     visibilityState: 'visible',
+    currentScript: { src: 'https://game.test/superfarmer/src/symbols.js' },
     createElement: () => new Canvas(),
     createElementNS: () => new Canvas(),
     addEventListener(type, callback) { if (!events.has(type)) events.set(type, []); events.get(type).push(callback); }
   };
-  const context = vm.createContext({ THREE, CANNON, document,
+  const context = vm.createContext({ THREE, CANNON, document, Image, URL,
     window: { innerWidth: 800, innerHeight: 600, devicePixelRatio: 1, matchMedia: () => ({ matches: false }) },
     performance: { now: () => 1000 }, Math: seededMath,
     console: { log() {}, warn() {}, error() {} },
@@ -56,6 +64,9 @@ function platform() {
     clearInterval: id => intervals.delete(id)
   });
   vm.runInContext(symbolsSource, context);
+  let artworkReady = false;
+  context.SYMBOLS.load(() => { artworkReady = true; }, error => { throw error; });
+  assert.ok(artworkReady, 'the test platform decodes artwork before constructing the scene');
   vm.runInContext(rulesSource, context);
   vm.runInContext(source, context);
   function scene(options = {}) {

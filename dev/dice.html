@@ -23,27 +23,41 @@
 <script src="../src/dice3d.js"></script>
 <script>
   var out = document.getElementById('out');
-  try {
-    var scene = new DiceScene({
-      canvas: document.getElementById('cv'),
-      atlasCanvas: SYMBOLS.buildAtlas(2048),
-      symbolsA: RULES.DIE_A,
-      symbolsB: RULES.DIE_B,
-      onSettle: function (faces) { out.textContent = 'WYNIK: ' + faces.join(' + '); console.log('[SETTLE]', faces.join('+')); },
-      onImpact: function (kind, s) { console.log('[IMPACT]', kind, s.toFixed(2)); },
-      onThrow: function () { out.textContent = 'w locie…'; console.log('[THROW]'); }
-    });
-    scene.setInteractive(true);
-    scene.setInsets({ top: 60, right: 0, bottom: 70, left: 0 });
-    window.SCENE = scene;
-    out.textContent = 'gotowe — przeciągnij lub throwAuto';
-    console.log('[DEV] scene ready');
-  } catch (err) {
+  var auto = document.getElementById('auto');
+  var scene = null, loading = false;
+  function failed(err) {
+    loading = false;
     out.textContent = 'BŁĄD: ' + err.message;
+    auto.textContent = 'Spróbuj ponownie'; auto.disabled = false;
     console.error('[DEV-ERR]', err);
   }
-  document.getElementById('auto').onclick = function () { SCENE.throwAuto(); };
-  window.addEventListener('resize', function () { SCENE && SCENE.resize(); });
+  function startScene() {
+    if (loading || scene) return;
+    loading = true; auto.disabled = true;
+    out.textContent = 'Wczytywanie ilustracji…';
+    SYMBOLS.load(function () {
+      try {
+        scene = new DiceScene({
+          canvas: document.getElementById('cv'),
+          atlasCanvas: SYMBOLS.buildAtlas(2048),
+          symbolsA: RULES.DIE_A,
+          symbolsB: RULES.DIE_B,
+          onSettle: function (faces) { out.textContent = 'WYNIK: ' + faces.join(' + '); console.log('[SETTLE]', faces.join('+')); },
+          onImpact: function (kind, s) { console.log('[IMPACT]', kind, s.toFixed(2)); },
+          onThrow: function () { out.textContent = 'w locie…'; console.log('[THROW]'); }
+        });
+        scene.setInteractive(true);
+        scene.setInsets({ top: 60, right: 0, bottom: 70, left: 0 });
+        window.SCENE = scene;
+        loading = false; auto.disabled = false; auto.textContent = 'throwAuto';
+        out.textContent = 'gotowe — przeciągnij lub throwAuto';
+        console.log('[DEV] scene ready');
+      } catch (err) { failed(err); }
+    }, failed);
+  }
+  auto.onclick = function () { if (scene) scene.throwAuto(); else startScene(); };
+  window.addEventListener('resize', function () { if (scene) scene.resize(); });
+  startScene();
 </script>
 </body>
 </html>

@@ -578,6 +578,9 @@ var HUD = (function () {
   /* ---------- init ---------- */
   function init(callbacks) {
     cb = callbacks;
+    var heroRabbit = $('heroRabbit'), heroSheep = $('heroSheep');
+    if (heroRabbit) heroRabbit.setAttribute('href', spr('rabbit', 96));
+    if (heroSheep) heroSheep.setAttribute('href', spr('sheep', 96));
     buildRules();
     // Changes to the HUD report real bounds; the scene decides when it is safe
     // to apply them, so shrinking the dock never moves a die during a throw.

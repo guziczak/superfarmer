@@ -31,8 +31,20 @@ const jsqr = read('vendor/jsQR.js');
 /* ---------- źródła ---------- */
 const css = read('src/style.css');
 const markup = read('src/markup.html');
+// Ilustracje są częścią obu samodzielnych dokumentów, również w trybie offline.
+const animalArt = readFileSync(join(root, 'assets/animals.webp'));
+if (!animalArt.length) throw new Error('assets/animals.webp: pusty plik ilustracji');
+if (animalArt.length < 12 || animalArt.toString('ascii', 0, 4) !== 'RIFF' || animalArt.toString('ascii', 8, 12) !== 'WEBP') {
+  throw new Error('assets/animals.webp: plik nie jest obrazem WebP');
+}
+const artMarker = "'__ANIMAL_ART_DATA__'";
+const symbolsSource = read('src/symbols.js');
+if (symbolsSource.split(artMarker).length !== 2) {
+  throw new Error('symbols.js: oczekiwano dokładnie jednego znacznika ilustracji');
+}
+const bundledSymbols = symbolsSource.replace(artMarker, JSON.stringify('data:image/webp;base64,' + animalArt.toString('base64')));
 const srcs = ['symbols.js', 'rules.js', 'audio.js', 'ai.js', 'net.js', 'dice3d.js', 'hud.js', 'main.js']
-  .map((f) => `/* ===== src/${f} ===== */\n` + read('src/' + f))
+  .map((f) => `/* ===== src/${f} ===== */\n` + (f === 'symbols.js' ? bundledSymbols : read('src/' + f)))
   .join('\n\n');
 
 for (const chunk of [three, cannon, qrgen, jsqr, srcs]) {

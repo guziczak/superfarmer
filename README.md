@@ -19,7 +19,8 @@ Na telefonie wygodniej otworzyć grę przez serwer lub hosting. Gra na dwóch ur
 - Nowy ekran startowy, własna ilustracja SVG i trzy czytelne karty trybów.
 - Przywrócona realistyczna oprawa: ciepłe drewno, głęboki zielony filc i światło podkreślające przestrzenny kształt przedmiotów. Faktury powstają proceduralnie i nie wymagają pobierania obrazów.
 - Miękko zaokrąglone kostki w kolorze kości słoniowej, z drobnymi nadrukami bez ozdobnych ramek i medalionów.
-- Nowy komplet dziewięciu sylwetek zwierząt z naturalnymi proporcjami i wyraźnymi cechami gatunków, wspólny dla nadruków na kostkach i interfejsu.
+- Dziewięć naturalistycznych ilustracji zwierząt: poprawione proporcje, modelowanie futra, wełny i skóry oraz czytelne sylwetki. Wspólny zestaw dla nadruków na kostkach i interfejsu, osadzony w HTML i dostępny offline.
+- Ilustracje są dekodowane przed uruchomieniem sceny i HUD-u. Przy błędzie wczytania można ponowić próbę bez utworzenia pustych ikon.
 - Karty stad z licznikiem zebranych gatunków, paskiem postępu i numerem rundy.
 - Niższe karty graczy oraz kompaktowy panel statusu podczas rzutu, z zachowaniem wygodnych przycisków dotykowych. Zmiana panelu nie przesuwa kostek w locie ani po zatwierdzeniu wyniku.
 - Odświeżone wymiany, zasady, historia, formularze parowania oraz ekran zwycięstwa.
@@ -77,7 +78,8 @@ Można również wywoływać bezpośrednio `node build.mjs` oraz skrypty w `dev/
 | `src/main.js` | Tury, zapis, wznowienie i protokół rozgrywki |
 | `src/dice3d.js` | Wspólna fizyka, renderer WebGL i renderer Canvas 2D |
 | `src/net.js` | Parowanie QR, WebRTC i cykl życia połączenia |
-| `src/hud.js`, `src/symbols.js`, `src/audio.js` | Prezentacja, proceduralne zwierzęta i dźwięk |
+| `src/hud.js`, `src/symbols.js`, `src/audio.js` | Prezentacja, atlas zwierząt i dźwięk |
+| `assets/animals.webp`, `assets/README.md` | Przezroczyste ilustracje, kolejność pól i opis przygotowania grafiki |
 | `src/sw.js`, `src/icon.svg` | Źródła service workera i ikony |
 | `icons/` | Gotowe ikony PNG 192, 512 i Apple Touch |
 | `vendor/` | Biblioteki dołączane do HTML |
@@ -92,7 +94,8 @@ Uruchomione z powodzeniem:
 - 31 pierwotnych asercji reguł oraz dodatkowe przypadki walidacji.
 - 576 wyników rzutów sprawdzonych pod kątem zachowania liczby zwierząt i niezmieniania wejściowych obiektów.
 - 6 regresji natychmiastowej wygranej Zenka i przegląd 2624 stanów, w tym 720 stanów z dostępną wygrywającą wymianą.
-- 17 scenariuszy integracji stanu gry: wznowienie, animacje, wygrana, menu, wiadomości P2P i przerwany rzut.
+- 19 scenariuszy integracji stanu gry: gotowość ilustracji i ponowienie wczytania, wznowienie, animacje, wygrana, menu, wiadomości P2P i przerwany rzut.
+- 9 scenariuszy wczytywania ilustracji: opóźnione dekodowanie, współdzielenie obrazu, błędy i ponowienie, walidacja arkusza, cache sprite'ów i zgodność mapowania atlasu.
 - 162 asercje na rzeczywistym module DiceScene, w tym 30 pełnych rzutów, zamknięcie zaokrąglonej siatki, zgodność powierzchni i normalnych z geometrią K13, ograniczenie do fizycznego hull, Canvas 2D, dopasowanie całej drewnianej ramy do ekranu i HUD-u, stabilność wyniku, odraczanie zmian HUD, resize i odświeżanie w tle/bezruchu.
 - 10 kontroli pamięci offline, 7 kontroli wejścia sieciowego i bufora transmisji, 15 scenariuszy cyklu życia połączenia oraz 11 asercji kodowania i odczytu QR.
 - Dotychczasowe testy geometrii, osiadania i blokowania kostek.
