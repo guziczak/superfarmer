@@ -1,14 +1,13 @@
 /* ============================================================
-   SUPERFARMER — autorskie portrety zwierząt
-   Wspólne ilustracje wektorowe dla HUD-u i atlasu kostek.
-   Siatka 100×100, równy zielony kontur, czyste kolory i lekki cień.
-   Tło pozostaje przezroczyste; medaliony rysuje renderer kostek.
+   SUPERFARMER — grafika zwierząt (atlas na kostki + sprite'y HUD)
+   Sylwetki komponowane z prymitywów (elipsy + gładkie ścieżki).
+   Obrys unii kształtów: najpierw wszystkie prymitywy grubym konturem,
+   potem te same wypełnione kolorem — kontur zostaje tylko na krawędzi.
    Global: SYMBOLS
    ============================================================ */
 var SYMBOLS = (function () {
   'use strict';
 
-  // Kolejność jest częścią kontraktu atlasu i mapowania ścian kostek.
   var ORDER = ['rabbit', 'sheep', 'pig', 'cow', 'horse', 'wolf', 'fox'];
 
   var NAMES_PL = {
@@ -31,259 +30,357 @@ var SYMBOLS = (function () {
     return f[2];
   }
 
-  var INK = '#214b3f';
-  var CREAM = '#fff7df';
+  // Akcenty UI per zwierzę (chipy w HUD)
   var COLORS = {
-    rabbit: '#e9c99a', sheep: '#d9e1cb', pig: '#ef9a9f', cow: '#b8d1bb',
-    horse: '#dca058', smallDog: '#e7b96f', bigDog: '#71937b',
-    wolf: '#88aeb1', fox: '#ef9a43'
+    rabbit: '#b08d63', sheep: '#d9cdb4', pig: '#dfa0ab', cow: '#cfc9bd',
+    horse: '#9c6b44', smallDog: '#c89a5b', bigDog: '#8a6a4f',
+    wolf: '#7d7b85', fox: '#e0782f'
   };
 
-  /* ---------- elementy ilustracji ---------- */
-  // P: ścieżka (M/L/Q/C/Z), E: elipsa, L: otwarta linia.
-  // outline=false stosujemy do dużych plam barwnych i drobnych rysów.
-  function P(fill, commands, outline) {
-    return { fill: fill, commands: commands, outline: outline !== false };
+  /* ---------- prymitywy ---------- */
+  function E(cx, cy, rx, ry, rot) { return { k: 'e', cx: cx, cy: cy, rx: rx, ry: ry, rot: (rot || 0) * Math.PI / 180 }; }
+  function P(pts) { return { k: 'p', pts: pts }; } // [x,y,sharp?]
+  function S(pts, w) { return { k: 's', pts: pts, w: w }; } // otwarta linia (ogon świni)
+
+  /** Noga z profilu: zwężany wielokąt z lekkim załamaniem w stawie.
+      (x,y) = nasada u tułowia, len = długość, wTop/wBot = połówki szerokości,
+      bend = przesunięcie stawu w bok (+ = do tyłu), dx = znos dołu nogi. */
+  function LEG(x, y, len, wTop, wBot, bend, dx) {
+    bend = bend || 0;
+    dx = dx || 0;
+    var ky = y + len * 0.52, fy = y + len;
+    var kx = x + dx * 0.5 + bend;
+    var fx = x + dx;
+    return P([
+      [x - wTop, y, 1],
+      [x + wTop, y, 1],
+      [kx + wTop * 0.5, ky],
+      [fx + wBot, fy, 1],
+      [fx - wBot, fy, 1],
+      [kx - wTop * 0.5, ky]
+    ]);
   }
-  function E(fill, x, y, rx, ry, outline, angle) {
-    return { fill: fill, ellipse: [x, y, rx, ry, (angle || 0) * Math.PI / 180], outline: outline !== false };
+
+  function tracePoly(ctx, pts) {
+    var n = pts.length;
+    var mx = (pts[0][0] + pts[1][0]) / 2, my = (pts[0][1] + pts[1][1]) / 2;
+    ctx.moveTo(mx, my);
+    for (var i = 1; i <= n; i++) {
+      var c = pts[i % n], nx = pts[(i + 1) % n];
+      var mx2 = (c[0] + nx[0]) / 2, my2 = (c[1] + nx[1]) / 2;
+      if (c[2]) { ctx.lineTo(c[0], c[1]); ctx.lineTo(mx2, my2); }
+      else ctx.quadraticCurveTo(c[0], c[1], mx2, my2);
+    }
+    ctx.closePath();
   }
-  function L(commands, width) {
-    return { fill: null, commands: commands, outline: true, width: width || 0.72 };
+
+  function traceOpen(ctx, pts) {
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (var i = 1; i < pts.length - 1; i++) {
+      var mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
+      ctx.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
+    }
+    var l = pts[pts.length - 1];
+    ctx.lineTo(l[0], l[1]);
   }
-  function G(top, bottom) { return { top: top, bottom: bottom }; }
+
+  /** Sama ścieżka prymitywu (do clipa) — linie otwarte 's' pomijamy. */
+  function tracePrimPath(ctx, p) {
+    if (p.k === 'e') {
+      ctx.moveTo(p.cx + p.rx * Math.cos(p.rot), p.cy + p.rx * Math.sin(p.rot));
+      ctx.ellipse(p.cx, p.cy, p.rx, p.ry, p.rot, 0, Math.PI * 2);
+    } else if (p.k === 'p') {
+      tracePoly(ctx, p.pts);
+    }
+  }
+
+  function drawPrim(ctx, p, mode, fill, outline, ow) {
+    ctx.beginPath();
+    if (p.k === 'e') {
+      ctx.ellipse(p.cx, p.cy, p.rx, p.ry, p.rot, 0, Math.PI * 2);
+    } else if (p.k === 'p') {
+      tracePoly(ctx, p.pts);
+    } else if (p.k === 's') {
+      traceOpen(ctx, p.pts);
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      if (mode === 'outline') { ctx.strokeStyle = outline; ctx.lineWidth = p.w + ow * 2; ctx.stroke(); }
+      else { ctx.strokeStyle = fill; ctx.lineWidth = p.w; ctx.stroke(); }
+      return;
+    }
+    if (mode === 'outline') {
+      ctx.fillStyle = outline; ctx.fill();
+      ctx.strokeStyle = outline; ctx.lineWidth = ow * 2; ctx.lineJoin = 'round'; ctx.stroke();
+    } else { ctx.fillStyle = fill; ctx.fill(); }
+  }
+
+  /* ---------- definicje zwierząt (siatka 100×100, profil w lewo) ----------
+     body: prymitywy w kolorze głównym (z obrysem unii)
+     details: [prim, kolor] rysowane na wierzchu bez obrysu               */
+  var INK = '#33261b'; // kolor obrysu — ciepła sepia
 
   var DEFS = {
-    rabbit: [
-      // Głowa i uszy mają jeden obrys: wyraźna sylwetka nawet przy 18 px.
-      P(G('#fffaf0', '#efdfc0'), [
-        ['M', 29, 45], ['C', 25, 32, 23, 11, 32, 8],
-        ['C', 42, 5, 46, 26, 46, 41], ['L', 54, 41],
-        ['C', 55, 26, 60, 7, 69, 10], ['C', 78, 13, 74, 33, 70, 45],
-        ['C', 78, 51, 82, 58, 81, 68], ['C', 80, 82, 65, 90, 50, 90],
-        ['C', 35, 90, 21, 82, 19, 69], ['C', 17, 58, 22, 50, 29, 45], ['Z']
-      ]),
-      E('#efb0a6', 35, 27, 4.5, 14, false, -10),
-      E('#efb0a6', 64, 29, 4.5, 13, false, 12),
-      E(CREAM, 50, 74, 18, 11, false),
-      E(INK, 38, 62, 2.7, 3, false), E(INK, 62, 62, 2.7, 3, false),
-      P('#d57e7d', [['M', 45, 71], ['Q', 50, 68, 55, 71], ['Q', 55, 74, 50, 77], ['Q', 45, 74, 45, 71], ['Z']], false),
-      L([['M', 50, 77], ['L', 50, 80], ['M', 43, 80], ['Q', 47, 84, 50, 80], ['Q', 53, 84, 57, 80]])
-    ],
+    rabbit: {
+      fill: '#a17a4e',
+      body: [
+        E(64, 66, 21, 20),            // zad
+        E(44, 64, 19, 16),            // korpus
+        E(32, 68, 13, 14),            // pierś
+        E(27, 50, 13, 12),            // głowa
+        E(30, 28, 6, 19, -14),        // ucho przednie
+        E(41, 27, 6, 19, 10),         // ucho tylne
+        E(30, 85, 9, 5),              // łapka przednia
+        E(66, 86, 13, 5.5),           // stopa tylna
+        E(85, 66, 6.5, 6.5)           // ogonek
+      ],
+      details: [
+        [E(30, 29, 3, 13, -14), '#c9a276'],  // wnętrze ucha
+        [E(41, 28, 3, 13, 10), '#c9a276'],
+        [E(85, 65, 4.5, 4.5), '#e8d9bd'],    // puch ogonka
+        [E(22, 48, 2.2, 2.2), INK],          // oko
+        [E(21.4, 47.4, 0.8, 0.8), '#f3ecd9'],
+        [E(16.5, 53, 1.8, 1.4), INK]         // nosek
+      ]
+    },
 
-    sheep: [
-      E('#78917a', 19, 50, 11, 7, true, -15),
-      E('#78917a', 81, 50, 11, 7, true, 15),
-      P(G('#fffdf0', '#e6e7cc'), [
-        ['M', 24, 32], ['C', 16, 23, 24, 12, 35, 16],
-        ['C', 40, 6, 54, 6, 60, 15], ['C', 73, 8, 84, 19, 79, 30],
-        ['C', 91, 34, 93, 48, 83, 55], ['C', 91, 66, 85, 78, 73, 79],
-        ['C', 71, 91, 58, 97, 49, 88], ['C', 38, 96, 25, 88, 26, 78],
-        ['C', 13, 76, 8, 63, 17, 54], ['C', 7, 45, 13, 33, 24, 32], ['Z']
-      ]),
-      P(G('#829a80', '#5b7b67'), [
-        ['M', 34, 38], ['Q', 50, 31, 66, 38], ['C', 74, 46, 71, 67, 64, 77],
-        ['Q', 50, 87, 36, 77], ['C', 29, 67, 26, 46, 34, 38], ['Z']
-      ]),
-      P(CREAM, [
-        ['M', 28, 35], ['C', 25, 28, 31, 22, 38, 25],
-        ['C', 42, 18, 52, 18, 56, 25], ['C', 66, 20, 75, 27, 71, 35],
-        ['Q', 66, 41, 59, 36], ['Q', 50, 44, 42, 36], ['Q', 33, 42, 28, 35], ['Z']
-      ]),
-      E(CREAM, 39, 54, 2.7, 3, false), E(CREAM, 61, 54, 2.7, 3, false),
-      P(INK, [['M', 45, 66], ['Q', 50, 64, 55, 66], ['L', 50, 71], ['Z']], false),
-      L([['M', 50, 71], ['L', 50, 75], ['M', 44, 75], ['Q', 50, 79, 56, 75]])
-    ],
+    sheep: {
+      fill: '#e0d2ad',
+      body: [
+        E(50, 52, 17, 14), E(38, 56, 14, 12), E(63, 56, 14, 12),
+        E(44, 46, 12, 10), E(58, 46, 12, 10), E(51, 62, 16, 12),
+        E(29, 42, 8, 7)               // czupryna nad głową
+      ],
+      details: [
+        [E(25, 51, 9.5, 11.5, 12), '#3a3231'],   // ciemna głowa (suffolk)
+        [P([[19, 42, 1], [12, 46], [18, 50, 1]]), '#3a3231'], // ucho
+        [LEG(25, 62, 21, 2.5, 1.5, -0.4, -0.3), '#3a3231'],  // nogi
+        [LEG(38, 65, 19.5, 2.3, 1.4, 0, 0), '#3a3231'],
+        [LEG(53, 65, 19.5, 2.3, 1.4, 0.8, 0.2), '#3a3231'],
+        [LEG(66, 63, 20.5, 2.6, 1.5, 1.4, 0.4), '#3a3231'],
+        [E(22, 49, 1.9, 1.9), '#e8dfc8'],        // oko
+        [E(21.5, 48.5, 0.7, 0.7), '#2a2423']
+      ]
+    },
 
-    pig: [
-      P('#ef9ca3', [['M', 26, 43], ['Q', 18, 29, 21, 15], ['Q', 38, 14, 43, 35], ['Z']]),
-      P('#ef9ca3', [['M', 57, 35], ['Q', 62, 14, 79, 15], ['Q', 83, 29, 74, 43], ['Z']]),
-      P('#dc7d89', [['M', 25, 21], ['L', 35, 27], ['L', 29, 36], ['Z']], false),
-      P('#dc7d89', [['M', 75, 21], ['L', 65, 27], ['L', 71, 36], ['Z']], false),
-      E(G('#ffdbcf', '#f1a2a0'), 50, 57, 33, 32),
-      E(INK, 37, 51, 2.7, 3, false), E(INK, 63, 51, 2.7, 3, false),
-      E('#ed8996', 50, 67, 20, 13),
-      E(INK, 43, 67, 2.6, 3.5, false), E(INK, 57, 67, 2.6, 3.5, false),
-      L([['M', 44, 83], ['Q', 50, 86, 56, 83]])
-    ],
+    pig: {
+      fill: '#e39aa4',
+      body: [
+        E(54, 60, 27, 19),            // korpus
+        E(29, 56, 14, 12),            // głowa
+        E(16.5, 59, 5.5, 6.5),        // ryjek
+        P([[24, 47, 1], [33, 38, 1], [36, 52, 1]]), // ucho
+        LEG(37, 70, 17, 3.8, 2.4, -0.4, -0.3),
+        LEG(47.5, 72, 15.5, 3.4, 2.2, 0, 0),
+        LEG(69.5, 70, 17, 4.4, 2.4, 1.4, 0.4),
+        LEG(61, 72, 15.5, 3.7, 2.2, 1.1, 0.2),
+        S([[80, 54], [87, 50], [90, 55], [85, 59], [82, 55]], 3.4) // kręcony ogon
+      ],
+      details: [
+        [E(15.8, 57.2, 1.2, 1.7), '#8f5560'],    // nozdrza
+        [E(15.8, 61.4, 1.2, 1.7), '#8f5560'],
+        [P([[26, 48, 1], [32, 42, 1], [34, 51, 1]]), '#c77e8b'], // wnętrze ucha
+        [LEG(47.5, 72, 15.5, 3.4, 2.2, 0, 0), 'rgba(120,60,70,0.20)'], // dalsze nogi w cieniu
+        [LEG(61, 72, 15.5, 3.7, 2.2, 1.1, 0.2), 'rgba(120,60,70,0.20)'],
+        [E(36.7, 86.3, 2.6, 1.8), '#b56d7a'], [E(47.5, 86.8, 2.4, 1.7), '#b56d7a'], // racice
+        [E(61.2, 86.8, 2.4, 1.7), '#b56d7a'], [E(69.9, 86.3, 2.6, 1.8), '#b56d7a'],
+        [E(24, 52, 2, 2), INK],                  // oko
+        [E(23.4, 51.4, 0.7, 0.7), '#f6e9ea']
+      ]
+    },
 
-    cow: [
-      E('#f1d3b9', 21, 41, 12, 8, true, 18),
-      E('#f1d3b9', 79, 41, 12, 8, true, -18),
-      P('#e6c178', [['M', 30, 32], ['Q', 24, 22, 25, 14], ['Q', 33, 22, 41, 24], ['L', 41, 34], ['Z']]),
-      P('#e6c178', [['M', 59, 24], ['Q', 67, 22, 75, 14], ['Q', 76, 22, 70, 32], ['L', 59, 34], ['Z']]),
-      P(G('#fffdf0', '#e7e9cf'), [
-        ['M', 34, 28], ['Q', 50, 21, 66, 28], ['Q', 76, 38, 73, 55],
-        ['L', 71, 72], ['Q', 65, 88, 50, 90], ['Q', 35, 88, 29, 72],
-        ['L', 27, 55], ['Q', 24, 38, 34, 28], ['Z']
-      ]),
-      P('#365d4d', [
-        ['M', 31, 34], ['C', 38, 28, 48, 31, 45, 42],
-        ['C', 45, 51, 38, 57, 29, 53], ['Q', 26, 42, 31, 34], ['Z']
-      ], false),
-      P('#365d4d', [['M', 58, 27], ['Q', 69, 28, 71, 38], ['Q', 61, 43, 57, 35], ['Z']], false),
-      E(CREAM, 36, 48, 2.7, 3, false), E(INK, 64, 48, 2.7, 3, false),
-      E('#efb9ab', 50, 73, 24, 15),
-      E(INK, 40, 72, 2.7, 3.5, false), E(INK, 60, 72, 2.7, 3.5, false)
-    ],
+    cow: {
+      fill: '#efe9da',
+      body: [
+        E(55, 57, 28, 18),            // korpus
+        E(26, 49, 12, 11),            // głowa
+        E(20, 57, 8.5, 6.5),          // pysk
+        P([[20, 40, 1], [13, 33, 1], [22, 36, 1]]),  // róg
+        P([[30, 38, 1], [27, 29, 1], [35, 35, 1]]),  // róg 2
+        P([[34, 46, 1], [42, 40], [40, 50, 1]]),     // ucho
+        LEG(37, 62, 26, 4.1, 2.4, -0.8, -0.5),
+        LEG(47, 64, 24.5, 3.7, 2.2, -0.6, 0),
+        LEG(72, 61, 27, 5.2, 2.5, 2.6, 0.6),
+        LEG(63, 63, 25, 4.4, 2.2, 2, 0.3),
+        S([[82, 48], [89, 60], [88, 74]], 3.2)       // ogon
+      ],
+      details: [
+        [E(46, 50, 11, 9, 15), '#3b3532'],           // łaty
+        [E(67, 61, 10, 8, -12), '#3b3532'],
+        [E(56, 68, 6.5, 5, 5), '#3b3532'],
+        [E(28, 42, 5, 4, 20), '#3b3532'],            // łata na głowie
+        [E(66, 74, 7.5, 5.5), '#e2b6bd'],            // wymię
+        [E(88, 77, 3.5, 5), '#3b3532'],              // kitka ogona
+        [LEG(47, 64, 24.5, 3.7, 2.2, -0.6, 0), 'rgba(30,26,22,0.20)'], // dalsze nogi w cieniu
+        [LEG(63, 63, 25, 4.4, 2.2, 2, 0.3), 'rgba(30,26,22,0.20)'],
+        [E(36.5, 87.3, 2.9, 2.2), '#2e2a27'], [E(47, 87.8, 2.7, 2.1), '#2e2a27'],   // racice
+        [E(63.3, 87.3, 2.7, 2.1), '#2e2a27'], [E(72.6, 87.3, 3, 2.2), '#2e2a27'],
+        [E(17.5, 55.5, 1.3, 1.8), '#8d7f70'],        // nozdrze
+        [E(22.5, 47, 2, 2), INK],                    // oko
+        [E(21.9, 46.4, 0.7, 0.7), '#f6f0e2']
+      ]
+    },
 
-    horse: [
-      // Profil, długa szyja i szeroka grzywa odróżniają konia od rogaczy.
-      P('#3e6855', [
-        ['M', 48, 22], ['C', 64, 16, 77, 30, 80, 44], ['L', 76, 47],
-        ['L', 84, 58], ['L', 79, 60], ['L', 86, 73], ['L', 79, 77],
-        ['L', 82, 89], ['L', 57, 89], ['L', 55, 41], ['Z']
-      ]),
-      P('#e9b56a', [['M', 47, 29], ['Q', 39, 19, 42, 9], ['Q', 53, 13, 57, 27], ['Z']]),
-      P(G('#edbc77', '#d49a52'), [
-        ['M', 49, 24], ['Q', 38, 25, 34, 37], ['L', 20, 55],
-        ['Q', 15, 59, 19, 67], ['Q', 22, 75, 31, 73], ['L', 49, 66],
-        ['Q', 53, 77, 49, 89], ['L', 75, 89], ['Q', 75, 60, 64, 38],
-        ['Q', 60, 28, 49, 24], ['Z']
-      ]),
-      P('#fff1d0', [['M', 42, 29], ['Q', 37, 36, 32, 45], ['L', 25, 58], ['L', 35, 61], ['L', 46, 36], ['Z']], false),
-      P('#f7dcad', [
-        ['M', 22, 55], ['Q', 28, 52, 34, 59], ['L', 38, 67],
-        ['L', 30, 73], ['Q', 21, 75, 18, 66], ['Q', 16, 60, 22, 55], ['Z']
-      ], false),
-      P('#3e6855', [['M', 48, 24], ['Q', 40, 24, 34, 34], ['L', 34, 42], ['Q', 43, 37, 48, 29], ['Z']], false),
-      E(INK, 43, 44, 2.8, 3, false), E(INK, 24, 63, 2.5, 3.5, false, -22),
-      L([['M', 48, 53], ['Q', 52, 61, 43, 67]])
-    ],
+    horse: {
+      fill: '#8a5c36',
+      body: [
+        E(58, 50, 19, 12),             // kłoda
+        E(45, 49, 12, 11.5),           // pierś i kłąb
+        E(71, 48, 11, 11.5),           // zad
+        P([[36, 58, 1], [29, 32], [36, 24], [49, 45, 1]]),  // szyja
+        E(25, 27, 9.5, 5.8, -28),      // głowa
+        E(14.5, 33.5, 5, 3.8, -28),    // pysk
+        P([[29, 22, 1], [33, 13, 1], [37, 23, 1]]),         // ucho
+        LEG(42, 56, 31, 3.9, 2.3, -1.2, -0.8),   // przednia bliższa
+        LEG(50, 57, 29.5, 3.5, 2, -1, -0.4),     // przednia dalsza
+        LEG(74, 55, 32, 5.1, 2.4, 4, 0.8),       // tylna bliższa (udo→staw skokowy)
+        LEG(65.5, 56.5, 30, 4.3, 2.1, 3.2, 0.4)  // tylna dalsza
+      ],
+      details: [
+        [P([[33, 19, 1], [43, 25], [50, 40], [48, 53, 1], [42, 33]]), '#4a3320'],   // grzywa
+        [P([[28, 22, 1], [22, 19], [25, 27, 1]]), '#4a3320'],                        // grzywka
+        [P([[79, 41, 1], [91, 48], [93, 67], [86, 81, 1], [84, 58]]), '#4a3320'],   // ogon
+        [E(58, 59, 13, 3.6), 'rgba(58,32,14,0.30)'],                                 // cień brzucha
+        [LEG(50, 57, 29.5, 3.5, 2, -1, -0.4), 'rgba(40,22,10,0.22)'],                // dalsze nogi w cieniu
+        [LEG(65.5, 56.5, 30, 4.3, 2.1, 3.2, 0.4), 'rgba(40,22,10,0.22)'],
+        [E(41.2, 87.6, 2.9, 2.3), '#3a2b1d'], [E(49.6, 87, 2.7, 2.1), '#3a2b1d'],   // kopyta
+        [E(65.9, 87, 2.7, 2.1), '#3a2b1d'], [E(74.8, 87.6, 3, 2.3), '#3a2b1d'],
+        [E(13.5, 32.6, 3.3, 2.5, -28), '#a9805a'],   // jaśniejsze chrapy
+        [E(11.8, 34.8, 1, 1.2, -28), '#33261b'],     // nozdrze
+        [E(23.5, 25.5, 1.9, 1.9), INK],              // oko
+        [E(23, 25, 0.7, 0.7), '#f0e6d2']
+      ]
+    },
 
-    wolf: [
-      P(G('#a5c0be', '#779da2'), [
-        ['M', 21, 12], ['L', 40, 28], ['L', 50, 23], ['L', 60, 28],
-        ['L', 79, 12], ['L', 77, 45], ['L', 87, 57], ['L', 78, 59],
-        ['L', 83, 69], ['L', 71, 68], ['L', 65, 79], ['L', 50, 90],
-        ['L', 35, 79], ['L', 29, 68], ['L', 17, 69], ['L', 22, 59],
-        ['L', 13, 57], ['L', 23, 45], ['Z']
-      ]),
-      P('#456c68', [['M', 27, 23], ['L', 36, 32], ['L', 27, 38], ['Z']], false),
-      P('#456c68', [['M', 73, 23], ['L', 64, 32], ['L', 73, 38], ['Z']], false),
-      P('#d6e5dd', [['M', 39, 34], ['L', 50, 29], ['L', 61, 34], ['L', 57, 48], ['L', 50, 59], ['L', 43, 48], ['Z']], false),
-      P('#eef1df', [
-        ['M', 24, 49], ['L', 42, 61], ['L', 50, 71], ['L', 58, 61],
-        ['L', 76, 49], ['L', 75, 65], ['L', 64, 79], ['L', 50, 87],
-        ['L', 36, 79], ['L', 25, 65], ['Z']
-      ], false),
-      P(INK, [['M', 29, 48], ['L', 41, 51], ['L', 36, 56], ['L', 30, 54], ['Z']], false),
-      P(INK, [['M', 71, 48], ['L', 59, 51], ['L', 64, 56], ['L', 70, 54], ['Z']], false),
-      E('#f3c264', 35, 52, 1.4, 1.4, false), E('#f3c264', 65, 52, 1.4, 1.4, false),
-      P(INK, [['M', 45, 69], ['L', 55, 69], ['Q', 58, 71, 54, 75], ['L', 50, 78], ['L', 46, 75], ['Q', 42, 71, 45, 69], ['Z']], false),
-      L([['M', 50, 78], ['L', 50, 83]])
-    ],
+    wolf: {
+      fill: '#5c5a63',
+      body: [
+        E(54, 58, 24, 14),            // korpus
+        E(37, 56, 13, 13),            // pierś
+        E(28, 45, 12, 10),            // głowa
+        P([[10, 48, 1], [29, 39], [29, 54, 1]]),     // pysk
+        P([[24, 37, 1], [28, 25, 1], [33, 37, 1]]),  // ucho
+        P([[33, 37, 1], [38, 27, 1], [42, 39, 1]]),  // ucho 2
+        LEG(38, 60, 27, 3.6, 2.2, -0.8, -0.5),
+        LEG(47, 62, 25.5, 3.2, 2, -0.6, 0),
+        LEG(70, 59, 28, 4.6, 2.3, 3, 0.8),
+        LEG(62, 61, 26, 4, 2.1, 2.4, 0.4),
+        E(83, 55, 14, 6.5, 32)        // ogon
+      ],
+      details: [
+        [E(36, 62, 9, 8), '#8b8892'],                // jaśniejsza pierś
+        [P([[13, 48.5, 1], [24, 45.5], [24, 51, 1]]), '#8b8892'], // jasny dół pyska
+        [LEG(47, 62, 25.5, 3.2, 2, -0.6, 0), 'rgba(20,18,26,0.25)'],  // dalsze nogi w cieniu
+        [LEG(62, 61, 26, 4, 2.1, 2.4, 0.4), 'rgba(20,18,26,0.25)'],
+        [E(11.5, 46.8, 1.5, 1.3), INK],              // nos
+        [E(26, 43, 1.9, 1.7), '#e9b44c'],            // bursztynowe oko
+        [E(25.6, 42.7, 0.7, 0.7), INK]
+      ]
+    },
 
-    fox: [
-      P(G('#ffc36b', '#ed9140'), [
-        ['M', 18, 13], ['L', 39, 29], ['Q', 50, 25, 61, 29],
-        ['L', 82, 13], ['L', 83, 49], ['L', 91, 57], ['L', 77, 68],
-        ['Q', 62, 81, 50, 88], ['Q', 38, 81, 23, 68],
-        ['L', 9, 57], ['L', 17, 49], ['Z']
-      ]),
-      P('#52644d', [['M', 24, 24], ['L', 35, 32], ['L', 24, 41], ['Z']], false),
-      P('#52644d', [['M', 76, 24], ['L', 65, 32], ['L', 76, 41], ['Z']], false),
-      P(CREAM, [
-        ['M', 16, 49], ['Q', 33, 47, 50, 72], ['Q', 67, 47, 84, 49],
-        ['L', 88, 56], ['Q', 70, 76, 50, 86], ['Q', 30, 76, 12, 56], ['Z']
-      ], false),
-      E(INK, 33, 54, 2.8, 3, false, -15), E(INK, 67, 54, 2.8, 3, false, 15),
-      P(INK, [['M', 44, 69], ['Q', 50, 67, 56, 69], ['Q', 58, 71, 54, 75], ['L', 50, 78], ['L', 46, 75], ['Q', 42, 71, 44, 69], ['Z']], false),
-      L([['M', 50, 78], ['L', 50, 82]])
-    ],
+    fox: {
+      fill: '#e0762f',
+      body: [
+        E(52, 62, 21, 12),            // korpus
+        E(37, 60, 12, 11),            // pierś
+        E(30, 50, 11, 9),             // głowa
+        P([[15, 54, 1], [30, 45], [31, 57, 1]]),     // pyszczek
+        P([[24, 43, 1], [27, 30, 1], [34, 42, 1]]),  // ucho
+        P([[34, 42, 1], [40, 31, 1], [44, 44, 1]]),  // ucho 2
+        LEG(38, 63, 24, 3, 1.9, -0.6, -0.4),
+        LEG(46, 64.5, 22.5, 2.7, 1.8, -0.5, 0),
+        LEG(65, 62, 25, 3.9, 2, 2.6, 0.6),
+        LEG(58, 64, 23, 3.3, 1.8, 2, 0.3),
+        E(79, 64, 17, 8.5, -22)       // kita
+      ],
+      details: [
+        [E(90, 58.5, 6.5, 5.5, -22), '#f2e7d4'],     // biały koniec kity
+        [E(37, 67, 8, 6.5), '#f2e7d4'],              // biała pierś
+        [P([[17, 54.5, 1], [27, 50.5], [28, 57, 1]]), '#f2e7d4'], // biały pyszczek
+        [P([[26, 42, 1], [28, 33.5, 1], [32, 41.5, 1]]), '#42302a'], // ciemne wnętrze ucha
+        [LEG(46, 64.5, 22.5, 2.7, 1.8, -0.5, 0), 'rgba(40,25,15,0.24)'], // dalsze nogi w cieniu
+        [LEG(58, 64, 23, 3.3, 1.8, 2, 0.3), 'rgba(40,25,15,0.24)'],
+        [E(37.6, 85, 2.4, 3.2), '#42302a'], [E(46, 85, 2.3, 3), '#42302a'], // ciemne skarpetki
+        [E(58.3, 85, 2.3, 3), '#42302a'], [E(65.6, 85, 2.5, 3.2), '#42302a'],
+        [E(15.8, 53, 1.5, 1.3), INK],                // nos
+        [E(27, 48, 1.8, 1.6), '#4c3018'],            // oko
+        [E(26.6, 47.6, 0.6, 0.6), '#f6ecd8']
+      ]
+    }
+  };
 
-    smallDog: [
-      // Okrągły pysk, opadające uszy i koralowa obroża.
-      P(G('#e3ad61', '#ce934b'), [
-        ['M', 31, 29], ['C', 15, 22, 9, 37, 11, 54],
-        ['C', 12, 68, 21, 74, 29, 64], ['L', 37, 40], ['Z']
-      ]),
-      P(G('#e3ad61', '#ce934b'), [
-        ['M', 69, 29], ['C', 85, 22, 91, 37, 89, 54],
-        ['C', 88, 68, 79, 74, 71, 64], ['L', 63, 40], ['Z']
-      ]),
-      P('#ea9890', [['M', 32, 78], ['Q', 50, 84, 68, 78], ['L', 68, 88], ['Q', 50, 94, 32, 88], ['Z']]),
-      P(G('#ffe7b7', '#edc58c'), [
-        ['M', 33, 28], ['Q', 50, 21, 67, 28], ['Q', 77, 43, 73, 63],
-        ['Q', 68, 82, 50, 84], ['Q', 32, 82, 27, 63], ['Q', 23, 43, 33, 28], ['Z']
-      ]),
-      P('#dca357', [['M', 31, 35], ['Q', 40, 29, 44, 38], ['L', 41, 53], ['Q', 31, 57, 27, 48], ['Z']], false),
-      E(CREAM, 50, 65, 18, 12, false),
-      E(INK, 37, 49, 2.7, 3, false), E(INK, 63, 49, 2.7, 3, false),
-      P('#ed9b9b', [['M', 45, 70], ['L', 55, 70], ['L', 55, 76], ['Q', 50, 83, 45, 76], ['Z']], false),
-      P(INK, [['M', 44, 60], ['Q', 50, 57, 56, 60], ['Q', 58, 62, 54, 66], ['Q', 50, 70, 46, 66], ['Q', 42, 62, 44, 60], ['Z']], false),
-      L([['M', 50, 68], ['L', 50, 71], ['M', 43, 70], ['Q', 47, 74, 50, 71], ['Q', 53, 74, 57, 70]]),
-      E('#ffe2a1', 50, 88, 3.5, 3.5, false)
+  // Psy do HUD — rysowane jak lis/wilk, w cieplejszych kolorach pasterskich
+  DEFS.smallDog = {
+    fill: '#c9913f',
+    body: [
+      E(52, 63, 20, 12), E(37, 60, 12, 11), E(30, 50, 11, 9.5),
+      P([[16, 55, 1], [30, 46], [31, 58, 1]]),
+      P([[23, 44, 1], [21, 31, 1], [32, 41, 1]]),   // oklapnięte ucho
+      LEG(38, 64, 22, 2.9, 1.9, -0.6, -0.4),
+      LEG(46, 65.5, 20.5, 2.6, 1.8, -0.5, 0),
+      LEG(64, 63, 23, 3.7, 2, 2.4, 0.6),
+      LEG(57, 65, 21, 3.1, 1.8, 1.9, 0.3),
+      E(76, 53, 5, 11, 38)                          // ogon w górę
     ],
-
-    bigDog: [
-      // Szeroki pysk, stojące uszy, pasterska maska i bursztynowa obroża.
-      P('#4a7159', [['M', 20, 12], ['L', 42, 29], ['L', 29, 46], ['Z']]),
-      P('#4a7159', [['M', 80, 12], ['L', 58, 29], ['L', 71, 46], ['Z']]),
-      P('#e4b66c', [['M', 27, 23], ['L', 35, 31], ['L', 28, 37], ['Z']], false),
-      P('#e4b66c', [['M', 73, 23], ['L', 65, 31], ['L', 72, 37], ['Z']], false),
-      P('#e1ad4f', [['M', 28, 79], ['Q', 50, 88, 72, 79], ['L', 72, 89], ['Q', 50, 97, 28, 89], ['Z']]),
-      P(G('#efc984', '#dda862'), [
-        ['M', 33, 28], ['Q', 50, 21, 67, 28], ['L', 76, 43], ['L', 74, 68],
-        ['Q', 67, 82, 50, 85], ['Q', 33, 82, 26, 68], ['L', 24, 43], ['Z']
-      ]),
-      P('#436b54', [['M', 29, 35], ['Q', 38, 28, 45, 36], ['L', 43, 55], ['L', 30, 58], ['L', 26, 44], ['Z']], false),
-      P('#436b54', [['M', 71, 35], ['Q', 62, 28, 55, 36], ['L', 57, 55], ['L', 70, 58], ['L', 74, 44], ['Z']], false),
-      E(CREAM, 36, 46, 2.7, 3, false), E(CREAM, 64, 46, 2.7, 3, false),
-      P('#fff0cd', [['M', 35, 57], ['Q', 50, 51, 65, 57], ['L', 67, 70], ['Q', 62, 80, 50, 80], ['Q', 38, 80, 33, 70], ['Z']], false),
-      P(INK, [['M', 43, 60], ['Q', 50, 57, 57, 60], ['L', 56, 66], ['Q', 50, 71, 44, 66], ['Z']], false),
-      L([['M', 50, 69], ['L', 50, 74], ['M', 44, 74], ['Q', 50, 78, 56, 74]]),
-      E(CREAM, 50, 90, 3.5, 3.5, false)
+    details: [
+      [E(37, 67, 8, 6.5), '#ecd9b4'],
+      [E(16.8, 54, 1.5, 1.3), INK],
+      [E(27, 48, 1.8, 1.7), '#4c3018'],
+      [E(26.6, 47.6, 0.6, 0.6), '#f6ecd8'],
+      [E(76.5, 46, 2.6, 4, 38), '#ecd9b4']          // jasny czub ogona
+    ]
+  };
+  DEFS.bigDog = {
+    fill: '#7a5a3c',
+    body: [
+      E(53, 58, 25, 15), E(36, 56, 13, 13), E(28, 45, 12, 10.5),
+      P([[13, 50, 1], [28, 41], [29, 54, 1]]),
+      P([[22, 39, 1], [19, 25, 1], [31, 36, 1]]),
+      P([[33, 37, 1], [37, 26, 1], [42, 39, 1]]),
+      LEG(38, 60, 27, 3.5, 2.2, -0.7, -0.5),
+      LEG(47, 62, 25.5, 3.1, 2, -0.6, 0),
+      LEG(70, 59, 28, 4.4, 2.3, 2.8, 0.8),
+      LEG(62, 61, 26, 3.9, 2.1, 2.2, 0.4),
+      E(82, 50, 6, 13, 30)
+    ],
+    details: [
+      [E(36, 63, 9, 8), '#b39067'],
+      [E(14.5, 48.5, 1.6, 1.4), INK],
+      [E(26, 43, 1.9, 1.8), '#3d2a16'],
+      [E(25.6, 42.6, 0.7, 0.7), '#f0e6d2']
     ]
   };
 
-  function trace(ctx, layer) {
-    ctx.beginPath();
-    if (layer.ellipse) {
-      var e = layer.ellipse;
-      ctx.ellipse(e[0], e[1], e[2], e[3], e[4], 0, Math.PI * 2);
-      return;
-    }
-    for (var i = 0; i < layer.commands.length; i++) {
-      var p = layer.commands[i];
-      if (p[0] === 'M') ctx.moveTo(p[1], p[2]);
-      else if (p[0] === 'L') ctx.lineTo(p[1], p[2]);
-      else if (p[0] === 'Q') ctx.quadraticCurveTo(p[1], p[2], p[3], p[4]);
-      else if (p[0] === 'C') ctx.bezierCurveTo(p[1], p[2], p[3], p[4], p[5], p[6]);
-      else if (p[0] === 'Z') ctx.closePath();
-    }
-  }
-
-  /** Rysuje portret w kwadracie size×size zaczepionym w (x, y). */
+  /** Rysuje zwierzę w kwadracie size×size zaczepionym w (x, y). */
   function drawAnimal(ctx, sym, x, y, size, outlineScale) {
-    var layers = DEFS[sym];
-    if (!layers) return;
+    var d = DEFS[sym];
+    if (!d) return;
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(size / 100, size / 100);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = INK;
-    var outline = 3.3 * (outlineScale || 1);
-    for (var i = 0; i < layers.length; i++) {
-      var layer = layers[i];
-      trace(ctx, layer);
-      if (layer.fill) {
-        if (typeof layer.fill === 'string') ctx.fillStyle = layer.fill;
-        else {
-          // Delikatne światło na samym kształcie, bez brązowej poświaty.
-          var g = ctx.createLinearGradient(34, 18, 66, 88);
-          g.addColorStop(0, layer.fill.top);
-          g.addColorStop(1, layer.fill.bottom);
-          ctx.fillStyle = g;
-        }
-        ctx.fill();
-      }
-      if (layer.outline) {
-        ctx.lineWidth = outline * (layer.width || 1);
-        ctx.stroke();
-      }
-    }
+    var ow = 3.1 * (outlineScale || 1);
+    var i;
+    for (i = 0; i < d.body.length; i++) drawPrim(ctx, d.body[i], 'outline', null, INK, ow);
+    for (i = 0; i < d.body.length; i++) drawPrim(ctx, d.body[i], 'fill', d.fill, null, 0);
+    for (i = 0; i < d.details.length; i++) drawPrim(ctx, d.details[i][0], 'fill', d.details[i][1], null, 0);
+
+    // pas wolumetryczny: bryła zamiast płaskiej naklejki — światło z lewej-góry,
+    // cień ku dołowi-prawej, wszystko przycięte do sylwetki (kontur zostaje czysty)
+    ctx.save();
+    ctx.beginPath();
+    for (i = 0; i < d.body.length; i++) tracePrimPath(ctx, d.body[i]);
+    ctx.clip();
+    var gsh = ctx.createLinearGradient(30, 22, 80, 94);
+    gsh.addColorStop(0, 'rgba(48,27,12,0)');
+    gsh.addColorStop(0.55, 'rgba(48,27,12,0.05)');
+    gsh.addColorStop(1, 'rgba(42,22,10,0.36)');
+    ctx.fillStyle = gsh;
+    ctx.fillRect(0, 0, 100, 100);
+    var gl = ctx.createLinearGradient(70, 82, 22, 14);
+    gl.addColorStop(0, 'rgba(255,246,224,0)');
+    gl.addColorStop(0.55, 'rgba(255,246,224,0.04)');
+    gl.addColorStop(1, 'rgba(255,248,228,0.34)');
+    ctx.fillStyle = gl;
+    ctx.fillRect(0, 0, 100, 100);
+    ctx.restore();
     ctx.restore();
   }
 
@@ -303,9 +400,10 @@ var SYMBOLS = (function () {
     var ctx = cv.getContext('2d');
     ctx.clearRect(0, 0, cv.width, cv.height);
     for (var i = 0; i < ORDER.length; i++) {
-      var c = cellOf(ORDER[i]);
+      var sym = ORDER[i];
+      var c = cellOf(sym);
       var pad = cw * 0.14;
-      drawAnimal(ctx, ORDER[i], c.col * cw + pad, c.row * ch + pad, cw - pad * 2, 1);
+      drawAnimal(ctx, sym, c.col * cw + pad, c.row * ch + pad, cw - pad * 2, 1);
     }
     return cv;
   }
