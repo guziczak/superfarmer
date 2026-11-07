@@ -411,7 +411,6 @@
       HUD.setDock('rolling');
       HUD.dieLabels(null);
       AUDIO.whoosh();
-      HUD.closeSheets();
       return;
     }
     if (m.t === 'set') {
@@ -919,7 +918,6 @@
           HUD.setDock('rolling');
           HUD.dieLabels(null);
           AUDIO.whoosh();
-          HUD.closeSheets();
           if (isNetLocalTurn()) {
             sendTurnMessage({ t: 'roll' });
             startNetStream();

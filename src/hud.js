@@ -21,7 +21,7 @@ var HUD = (function () {
   var READABILITY_KEY = 'sf3d.readability.v1';
   var readability = { readable: false, scale: 100, calm: false };
   var viewPlayer = 0, cardExpanded = [true, false], currentState = null;
-  var lastRollMarkup = '', autoFlow = false;
+  var lastRollMarkup = '', autoFlow = false, pendingDockFocus = false;
 
   try {
     var storedReadability = JSON.parse(localStorage.getItem(READABILITY_KEY) || 'null');
@@ -114,6 +114,7 @@ var HUD = (function () {
   }
 
   function resetTransient() {
+    pendingDockFocus = false;
     eventGeneration++;
     clearTimeout(bannerTimer); clearTimeout(labelTimer); clearTimeout(gainsTimer);
     ['banner', 'dl0', 'dl1', 'swipehint', 'eventbig'].forEach(function (id) { $(id).classList.remove('show'); });
@@ -214,8 +215,12 @@ var HUD = (function () {
       card.id = 'pcard' + i;
       card.setAttribute('role', 'group');
       var chips = '';
-      for (var a = 0; a < RULES.ANIMALS.length; a++) {
-        var an = RULES.ANIMALS[a];
+      var animals = RULES.WIN_ANIMALS.concat(RULES.ANIMALS.filter(function (animal) {
+        return RULES.WIN_ANIMALS.indexOf(animal) < 0;
+      }));
+      for (var a = 0; a < animals.length; a++) {
+        var an = animals[a];
+        if (a === RULES.WIN_ANIMALS.length) chips += '<span class="herd-protection-title">Ochrona stada</span>';
         chips += '<div class="chip" role="img" data-a="' + an + '" aria-label="' + esc(SYMBOLS.NAMES_PL[an][0]) + ': 0">' + img(an, 88, true) +
           '<div class="cnt">0</div><span class="chip-label">' + esc(SYMBOLS.NAMES_PL[an][0]) + '</span></div>';
       }
@@ -343,13 +348,16 @@ var HUD = (function () {
     dock.dataset.mode = mode;
     dock.classList.toggle('compact', mode !== 'preroll-human' && mode !== 'await-next');
     dock.classList.toggle('has-notice', mode === 'preroll-human' && !!o.hint);
-    var ex = $('btnExchange'), roll = $('btnRoll'), hint = $('hintline');
+    var ex = $('btnExchange'), roll = $('btnRoll'), next = $('btnContinue'), hint = $('hintline');
+    var focusAnchor = $('lastRollList'), active = document.activeElement;
+    var followAction = !sheetOpen && !$('hud').inert &&
+      (active === roll || active === next || (pendingDockFocus && active === focusAnchor));
+    pendingDockFocus = false;
     var show = function (el, on) { el.style.display = on ? '' : 'none'; };
-    show(ex, false); show(roll, false);
-    if ($('btnContinue')) $('btnContinue').hidden = mode !== 'await-next';
+    show(ex, mode === 'preroll-human'); show(roll, mode === 'preroll-human');
+    if (next) next.hidden = mode !== 'await-next';
     hint.textContent = '';
     if (mode === 'preroll-human') {
-      show(ex, true); show(roll, true);
       ex.disabled = !!o.exchangeUsed;
       ex.textContent = o.exchangeUsed ? 'Wymiana ✓' : 'Wymiana';
       roll.disabled = false;
@@ -364,6 +372,14 @@ var HUD = (function () {
       hint.textContent = 'Liczymy przychówek…';
     } else if (mode === 'await-next') {
       hint.textContent = 'Wynik zapisany. Wybierz „Dalej”, gdy go przeczytasz.';
+    }
+    // Rzuć i Dalej znikają podczas zmiany tury. Zachowaj miejsce klawiatury
+    // przy wyniku i wróć do następnej akcji tylko, jeśli gracz stąd nie odszedł.
+    if (followAction && mode !== 'off') {
+      var action = mode === 'preroll-human' ? roll : mode === 'await-next' ? next : null;
+      var target = action || focusAnchor;
+      if (target && document.activeElement !== target) target.focus({ preventScroll: true });
+      pendingDockFocus = !action && document.activeElement === focusAnchor;
     }
     queueLayout();
   }
@@ -468,6 +484,7 @@ var HUD = (function () {
   /* ---------- arkusze ---------- */
   function openSheet(name) {
     if (sheetIds.indexOf(name) < 0) return;
+    pendingDockFocus = false;
     if (!sheetOpen) sheetTrigger = document.activeElement;
     closeSheets(true);
     sheetOpen = name;
@@ -743,6 +760,10 @@ var HUD = (function () {
   /* ---------- init ---------- */
   function init(callbacks) {
     cb = callbacks;
+    document.addEventListener('focusin', function (event) {
+      if (event.target !== $('lastRollList')) pendingDockFocus = false;
+    });
+    window.addEventListener('blur', function () { pendingDockFocus = false; });
     syncReadabilityRoot();
     syncReadabilityControls();
     ['btnReadability', 'btnReadability0'].forEach(function (id) {

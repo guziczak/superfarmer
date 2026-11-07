@@ -1,5 +1,5 @@
 // Exercise the production HUD with a small browser shell. This is not a layout
-// engine: CSS reflow, visual clipping, keyboard focus and WebGL need browser QA.
+// engine: CSS reflow, visual clipping, real keyboard traversal and WebGL need browser QA.
 // Static IDs come from the actual markup; HTML output is captured, not parsed.
 // RULES and Polish animal names/plurals are real; only sprite drawing is stubbed.
 import assert from 'node:assert/strict';
@@ -16,6 +16,7 @@ const defaults = { readable: false, scale: 100, calm: false };
 function platform({ stored, blockedRead = false, blockedWrite = false, width = 1024, height = 900 } = {}) {
   const storage = new Map(stored === undefined ? [] : [[PREFS, stored]]);
   const elements = new Map(), frames = new Map(), timers = new Map();
+  let document;
   let nextId = 1;
   class Target {
     listeners = new Map();
@@ -33,7 +34,7 @@ function platform({ stored, blockedRead = false, blockedWrite = false, width = 1
     constructor(id) {
       super();
       this.id = id; this.dataset = {}; this.attributes = new Map();
-      this.value = ''; this.checked = false; this.hidden = false;
+      this.value = ''; this.checked = false; this.hidden = false; this.isConnected = true;
       this.clientWidth = width; this.clientHeight = height;
       this.rect = { left: 0, top: 0, right: width, bottom: height, width, height };
       this.textWrites = 0; this.htmlWrites = 0; this._text = ''; this._html = '';
@@ -57,6 +58,22 @@ function platform({ stored, blockedRead = false, blockedWrite = false, width = 1
         setProperty: (name, value) => properties.set(name, String(value)),
         getPropertyValue: name => properties.get(name) || ''
       };
+      Object.defineProperty(this.style, 'display', {
+        get: () => properties.get('display') || '',
+        set: value => { properties.set('display', value); if (value === 'none') this.blur(); }
+      });
+    }
+    set hidden(value) { this._hidden = !!value; if (value) this.blur(); }
+    get hidden() { return this._hidden; }
+    focus(options) {
+      if (this.hidden || this.style.display === 'none' || this.inert || this.disabled) return;
+      if (document.activeElement === this) return;
+      document.activeElement = this;
+      this.focusOptions = options;
+      document.dispatchEvent({ type: 'focusin', target: this });
+    }
+    blur() {
+      if (document && document.activeElement === this) document.activeElement = document.body;
     }
     set textContent(value) { this._text = String(value); this.textWrites++; }
     get textContent() { return this._text; }
@@ -65,18 +82,20 @@ function platform({ stored, blockedRead = false, blockedWrite = false, width = 1
     setAttribute(name, value) { this.attributes.set(name, String(value)); }
     getAttribute(name) { return this.attributes.get(name) ?? null; }
     getBoundingClientRect() { return this.rect; }
-    getClientRects() { return this.hidden ? [] : [this.rect]; }
+    getClientRects() { return this.hidden || this.style.display === 'none' ? [] : [this.rect]; }
     querySelector() { return null; }
     querySelectorAll() { return []; }
   }
   for (const match of markup.matchAll(/\bid="([^"]+)"/g)) elements.set(match[1], new Element(match[1]));
-  const document = Object.assign(new Target(), {
+  document = Object.assign(new Target(), {
     documentElement: new Element('html'),
+    body: new Element('body'),
     baseURI: 'https://game.test/index.html',
     currentScript: null,
     getElementById: id => elements.get(id) || null,
     querySelectorAll: () => []
   });
+  document.activeElement = document.body;
   elements.get('topbar').rect.bottom = 160;
   elements.get('dock').rect.top = height - 200;
   const window = Object.assign(new Target(), {
@@ -287,6 +306,88 @@ test('live result announcements require an explicit player and refresh does not 
   s.lastRolls[0] = null;
   b.HUD.showLastRolls(s, 0);
   assert.equal(announcement.textWrites, 1, 'a player without a result has nothing to announce');
+});
+
+test('keyboard-started turns keep focus on results until the next available action', () => {
+  const b = platform();
+  b.HUD.init({});
+  b.HUD.setDock('preroll-human');
+  b.el('btnRoll').focus();
+  b.HUD.setDock('rolling');
+  assert.equal(b.document.activeElement, b.el('lastRollList'));
+  b.HUD.setDock('resolving');
+  assert.equal(b.document.activeElement, b.el('lastRollList'));
+  b.HUD.setDock('await-next');
+  assert.equal(b.document.activeElement, b.el('btnContinue'));
+  b.HUD.setDock('bot');
+  assert.equal(b.document.activeElement, b.el('lastRollList'));
+  b.HUD.setDock('rolling');
+  b.HUD.setDock('resolving');
+  b.HUD.setDock('await-next');
+  assert.equal(b.document.activeElement, b.el('btnContinue'));
+  b.HUD.setDock('preroll-human');
+  assert.equal(b.document.activeElement, b.el('btnRoll'));
+  b.HUD.setDock('rolling');
+  b.HUD.setDock('bot');
+  b.HUD.setDock('preroll-human');
+  assert.equal(b.document.activeElement, b.el('btnRoll'), 'automatic turns also return to the human action');
+  assert.equal(b.el('lastRollList').focusOptions.preventScroll, true);
+  assert.equal(b.el('btnContinue').focusOptions.preventScroll, true);
+});
+
+test('refreshing an available dock action preserves focus without temporarily hiding it', () => {
+  const b = platform();
+  b.HUD.init({});
+  for (const [mode, id] of [['preroll-human', 'btnRoll'], ['await-next', 'btnContinue']]) {
+    b.HUD.setDock(mode);
+    b.el(id).focus();
+    const focuses = [];
+    b.document.addEventListener('focusin', event => focuses.push(event.target));
+    b.HUD.setDock(mode);
+    assert.equal(b.document.activeElement, b.el(id));
+    assert.equal(focuses.length, 0, 'the visible action never loses and regains focus');
+  }
+});
+
+test('leaving the result panel cancels automatic action focus, even after returning to read it', () => {
+  for (const returnToResults of [false, true]) {
+    const b = platform();
+    b.HUD.init({});
+    b.HUD.setDock('preroll-human');
+    b.el('btnRoll').focus();
+    b.HUD.setDock('rolling');
+    b.el('btnMenu').focus();
+    if (returnToResults) b.el('lastRollList').focus();
+    const chosen = b.document.activeElement;
+    b.HUD.setDock('resolving');
+    b.HUD.setDock('await-next');
+    assert.equal(b.document.activeElement, chosen);
+  }
+  const b = platform();
+  b.HUD.init({});
+  b.HUD.setDock('preroll-human');
+  b.el('btnRoll').focus();
+  b.HUD.setDock('rolling');
+  b.window.emit('blur');
+  b.HUD.setDock('await-next');
+  assert.equal(b.document.activeElement, b.el('lastRollList'), 'leaving the browser also cancels pending focus');
+});
+
+test('a dialog keeps focus through a turn change and closing it does not resume automatic focus', () => {
+  const b = platform();
+  b.HUD.init({});
+  b.HUD.setDock('preroll-human');
+  b.el('btnRoll').focus();
+  b.HUD.setDock('rolling');
+  b.HUD.openSheet('sheetReadability');
+  const dialogFocus = b.document.activeElement;
+  b.HUD.setDock('await-next');
+  assert.equal(b.document.activeElement, dialogFocus);
+  assert.equal(b.el('hud').inert, true);
+  b.HUD.closeSheets();
+  assert.equal(b.document.activeElement, b.el('lastRollList'));
+  b.HUD.setDock('await-next');
+  assert.equal(b.document.activeElement, b.el('lastRollList'), 'the explicitly restored dialog trigger retains focus');
 });
 
 console.log('\n' + passed + ' accessibility HUD scenarios passed (browser rendering not simulated).');

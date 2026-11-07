@@ -52,14 +52,14 @@
   <button class="sheet-close" data-close-sheet type="button" aria-label="Zamknij wymianę"><svg class="icon" aria-hidden="true"><use href="#sf-close"/></svg></button>
   <h2 id="exchangeTitle" class="display">Dobry interes.</h2>
   <p class="sub">Wymiana ze Stadem Głównym. Jedna na turę, przed rzutem — w obie strony.</p>
-  <div class="scroll" id="exlist"></div>
+  <div class="scroll" id="exlist" role="region" aria-label="Dostępne wymiany" tabindex="0"></div>
 </section>
 <section id="sheetRules" class="sheet" role="dialog" aria-modal="true" aria-labelledby="rulesTitle" tabindex="-1">
   <div class="grip" aria-hidden="true"></div>
   <button class="sheet-close" data-close-sheet type="button" aria-label="Zamknij zasady"><svg class="icon" aria-hidden="true"><use href="#sf-close"/></svg></button>
   <h2 id="rulesTitle" class="display">Jak zostać superfarmerem?</h2>
   <p class="sub">Zasady klasycznego wydania Superfarmera.</p>
-  <div class="scroll rules" id="rulesContent"></div>
+  <div class="scroll rules" id="rulesContent" role="region" aria-labelledby="rulesTitle" tabindex="0"></div>
 </section>
 <section id="sheetMenu" class="sheet" role="dialog" aria-modal="true" aria-labelledby="menuTitle" tabindex="-1">
   <div class="grip" aria-hidden="true"></div>
@@ -73,7 +73,7 @@
   <button class="sheet-close" data-close-sheet type="button" aria-label="Zamknij historię"><svg class="icon" aria-hidden="true"><use href="#sf-close"/></svg></button>
   <h2 id="logTitle" class="display">Z życia farmy.</h2>
   <p class="sub">Ostatnie rzuty, wymiany i niespodziewani goście.</p>
-  <div class="scroll" id="logContent"></div>
+  <div class="scroll" id="logContent" role="region" aria-labelledby="logTitle" tabindex="0"></div>
 </section>
 <section id="sheetReadability" class="sheet" role="dialog" aria-modal="true" aria-labelledby="readabilityTitle" tabindex="-1">
   <div class="grip" aria-hidden="true"></div>

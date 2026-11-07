@@ -22,13 +22,13 @@ Na telefonie wygodniej otworzyć grę przez serwer lub hosting. Gra na dwóch ur
 - Dziewięć naturalistycznych ilustracji zwierząt: poprawione proporcje, modelowanie futra, wełny i skóry oraz czytelne sylwetki. Wspólny zestaw dla nadruków na kostkach i interfejsu, osadzony w HTML i dostępny offline.
 - Ilustracje są dekodowane przed uruchomieniem sceny i HUD-u. Przy błędzie wczytania można ponowić próbę bez utworzenia pustych ikon.
 - Karty stad z licznikiem zebranych gatunków, paskiem postępu i numerem rundy.
-- Czytelność dla osób słabowidzących: większe karty z nazwami zwierząt, tekst 100–200%, wyższy kontrast oraz jawny napis wskazujący turę. Ustawienia są zapamiętywane na urządzeniu.
+- Czytelność dla osób słabowidzących: większe karty z nazwami zwierząt, osobna sekcja „Ochrona stada” dla psów, tekst 100–200%, wyższy kontrast oraz jawny napis wskazujący turę. Ustawienia są zapamiętywane na urządzeniu.
 - Ostatni rzut każdego gracza pozostaje zapisany osobno: dwie ścianki, numer rundy i pełny skutek, także po ataku drapieżnika lub wyczerpaniu zapasu. Ruch przeciwnika nie usuwa Twojego wyniku.
 - Opcjonalne spokojne tempo: przycisk **Dalej** po rozstrzygnięciu rzutu w solo i grze przy jednym telefonie. W P2P wyniki również pozostają dostępne, a tury przechodzą automatycznie.
 - Powiększony interfejs przewija się wokół wydzielonego stołu 3D. Zmiany rozmiaru sceny czekają na koniec trwającego rzutu lub transmisji; powiększenie tekstu nie wybiera renderera 2D.
 - Kompaktowy panel statusu podczas rzutu, z zachowaniem wygodnych przycisków dotykowych. Samo zwijanie panelu nie przesuwa kostek w locie ani po zatwierdzeniu wyniku.
 - Odświeżone wymiany, zasady, historia, formularze parowania oraz ekran zwycięstwa.
-- Czytelne oznaczenie aktywnego gracza, opisowe etykiety, obsługa klawiatury, zamykanie dialogów przez Escape i przywracanie fokusu.
+- Czytelne oznaczenie aktywnego gracza, opisowe etykiety, obsługa klawiatury, zamykanie dialogów przez Escape i przywracanie fokusu. Zasady, historia i lista wymian mają dostępne z klawiatury obszary przewijania, także gdy żadna wymiana nie jest dostępna.
 - Układ reagujący na szerokość ekranu, obszary bezpieczne telefonu i preferencję ograniczenia animacji.
 - Brak zewnętrznych fontów i plików graficznych wymaganych do rozgrywki.
 - Działająca gra także bez WebGL: widok zgodności Canvas 2D odwzorowuje obrys i orientację kostek oraz wykorzystuje **ten sam silnik fizyczny, stany kostek i wynik rzutu**. Światło w tym trybie jest uproszczone.
@@ -46,6 +46,7 @@ Na telefonie wygodniej otworzyć grę przez serwer lub hosting. Gra na dwóch ur
 - **Wymiana** — jedna wymiana przed rzutem, w dowolnym kierunku i dostępnej liczbie sztuk.
 - **Menu → Zapisz i wróć do menu** — zachowuje bieżącą turę. „Wznów grę” nie przyznaje kolejnej wymiany.
 - **Czytelność** — dostępna na starcie, przy stole i w menu. Pozwala powiększyć karty, ustawić rozmiar tekstu oraz włączyć oczekiwanie na **Dalej**. W większych kartach przycisk z imieniem rozwija lub zwija stado.
+- **Tab w zasadach, historii lub wymianach** — przechodzi również do treści panelu; strzałki i Page Up/Page Down pozwalają ją przewijać.
 - **Escape** — zamyka otwarty panel.
 - **Zaawansowane** — ciężarek lub zmiana kształtu kostek. Wyświetlane częstości są orientacyjnymi wartościami wcześniejszej kalibracji; nie są gwarancją dla dowolnego sposobu rzucania.
 
@@ -60,6 +61,8 @@ Na wąskim lub niskim ekranie, przy większych kartach albo tekście ponad 100% 
 Każdy wynik jest zapisywany razem ze stanem stada przed rozpoczęciem animacji. Zapisane wyniki przetrwają wznowienie gry. Wcześniejsze zapisy bez tej informacji nadal działają; panel uzupełni się po kolejnych rzutach. Czytnik ekranu otrzymuje podsumowanie nowego wyniku raz, bez ponawiania go przy każdym odświeżeniu kart.
 
 Spokojne tempo daje czas na odczyt po każdym rzucie, także rzucie Zenka. Włączenie go nie zmienia rozgrywki na dwóch telefonach; ta zachowuje automatyczne przechodzenie tur.
+
+W wersji 2.3.1 przyciemniono także drobne podpisy w domyślnym widoku, opisy ustawień i podpowiedzi w polach. Po użyciu przycisku „Rzuć” lub „Dalej” fokus klawiatury pozostaje w rozgrywce, gdy ten przycisk znika. Otwarcie dialogu lub samodzielne przejście do innego elementu przerywa automatyczne przenoszenie fokusu. Rzut Zenka lub gracza na drugim telefonie nie zamyka czytanego menu, zasad ani historii.
 
 ## Zapis i zgodność wersji
 
@@ -111,14 +114,16 @@ Uruchomione z powodzeniem:
 - 31 pierwotnych asercji reguł oraz dodatkowe przypadki walidacji.
 - 576 wyników rzutów sprawdzonych pod kątem zachowania liczby zwierząt i niezmieniania wejściowych obiektów.
 - 6 regresji natychmiastowej wygranej Zenka i przegląd 2624 stanów, w tym 720 stanów z dostępną wygrywającą wymianą.
-- 32 scenariusze integracji stanu gry: gotowość ilustracji, wznowienie, animacje, wygrana, P2P, przerwany rzut, niezależne wyniki, spokojne tempo i odraczanie zmiany rozmiaru sceny.
-- 10 scenariuszy rzeczywistego HUD-u: preferencje i błędy pamięci, skalowanie, trwałe wyniki, opisy skutków, bezpieczne nazwy graczy i brak powtarzania komunikatów czytnika ekranu.
+- 33 scenariusze integracji stanu gry: gotowość ilustracji, wznowienie, animacje, wygrana, P2P, przerwany rzut, niezależne wyniki, spokojne tempo, odraczanie zmiany rozmiaru sceny i zachowanie otwartego menu podczas ruchu przeciwnika.
+- 14 scenariuszy rzeczywistego HUD-u: preferencje i błędy pamięci, skalowanie, trwałe wyniki, opisy skutków, bezpieczne nazwy graczy, brak powtarzania komunikatów czytnika ekranu oraz zachowanie fokusu przy zmianach tur i otwartych dialogach.
 - 9 scenariuszy wczytywania ilustracji: opóźnione dekodowanie, współdzielenie obrazu, błędy i ponowienie, walidacja arkusza, cache sprite'ów i zgodność mapowania atlasu.
 - 164 asercje na rzeczywistym module DiceScene, w tym 30 pełnych rzutów, zamknięcie zaokrąglonej siatki, zgodność powierzchni i normalnych z geometrią K13, ograniczenie do fizycznego hull, Canvas 2D, dopasowanie całej drewnianej ramy do ekranu i HUD-u, stabilność wyniku, odraczanie zmian HUD, resize, gesty na przesuniętym lub przewiniętym stole i odświeżanie w tle/bezruchu.
 - 10 kontroli pamięci offline, 7 kontroli wejścia sieciowego i bufora transmisji, 15 scenariuszy cyklu życia połączenia oraz 11 asercji kodowania i odczytu QR.
 - Dotychczasowe testy geometrii, osiadania i blokowania kostek.
 
 Testy fizyki i stanu uruchamiają rzeczywiste moduły gry; platforma przeglądarki, Canvas/DOM i transport są zastępowane w testach. Symbole i projekcję zaokrąglonych kostek dodatkowo wyrenderowano rzeczywistym Canvas 2D. Nowy zestaw zwierząt sprawdzono również w rozmiarach używanych przez HUD. Dziewięć pełnych programów shaderów, wygenerowanych przez Three.js dla sceny, skompilowano i zlinkowano przez OpenGL ES w EGL/Mesa, również z mapami faktur. Podczas zbierania shaderów kontekst WebGL był zastąpiony; ta kontrola sprawdza zgodność kodu, ale nie stanowi oględzin wyrenderowanej sceny 3D. Przeglądarka kontrolna ma wyłączony WebGL i korzysta z widoku 2D. Bezpośrednia kontrola sceny WebGL na telefonie i rzeczywiste parowanie dwóch urządzeń pozostają do sprawdzenia. Testy nie są dowodem statystycznej uczciwości kostek.
+
+Poprawki dostępności w wersji 2.3.1 sprawdzono testami powyżej i niezależnym przeglądem kodu. Kontrast zmienionych etykiet obliczono dla kolorów z CSS. Testy fokusu modelują zdarzenia DOM; nie zastępują oględzin w przeglądarce ani obsługi czytnikiem ekranu. Środowisko tej weryfikacji nie udostępniało podglądu lokalnej gry w przeglądarce.
 
 ## Repozytorium i hosting
 

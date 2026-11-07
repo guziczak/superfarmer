@@ -578,6 +578,40 @@ async function test(name, run) {
     assert.ok(resumed.last('showWin'));
   });
 
+  await test('automatic bot and peer rolls preserve an open menu while saving and advancing the turn', async () => {
+    for (const mode of ['solo', 'net']) {
+      const player = mode === 'solo' ? 1 : 0;
+      const b = mode === 'solo' ? browser(saved(position('solo', { cur: player }))) : browser();
+      if (mode === 'solo') b.ui.onResume(); else b.startNet();
+      b.ui.onMenuOpen();
+      assert.deepEqual(b.last('openSheet').args, ['sheetMenu']);
+      const menuOpened = b.calls.length;
+      if (mode === 'solo') await b.advance(1800);
+      else b.peer({ t: 'roll', player, turn: 1 });
+      assert.equal(b.state.phase, 'rolling');
+      const readSave = () => {
+        const stored = JSON.parse(b.storage.get(mode === 'solo' ? LOCAL : NETWORK));
+        return mode === 'solo' ? stored : stored.state;
+      };
+      assert.equal(readSave().phase, 'rolling');
+      if (mode === 'solo') b.scene.settle(['rabbit', 'rabbit']);
+      else b.peer({ t: 'set', player, turn: 1, faces: ['rabbit', 'rabbit'] });
+      const committed = readSave();
+      assert.equal(committed.phase, 'resolving');
+      assert.equal(committed.players[player].herd.rabbit, 1);
+      assert.equal(committed.stats.rolls[player], 1);
+      assert.deepEqual(committed.lastRolls[player].faces, ['rabbit', 'rabbit']);
+      await b.advance(2000);
+      assert.equal(b.state.phase, 'preroll');
+      assert.equal(b.state.cur, 1 - player);
+      assert.equal(b.state.turnCount, mode === 'solo' ? 2 : 1);
+      assert.deepEqual(readSave().lastRolls, committed.lastRolls);
+      assert.deepEqual(readSave().stats, committed.stats);
+      assert.equal(b.calls.slice(menuOpened).some(call => call.name === 'closeSheets'), false,
+        mode + ' must not dismiss the menu during an automatic throw or turn transition');
+    }
+  });
+
   await test('returning to the menu invalidates late dice and animation callbacks', async () => {
     for (const settled of [false, true]) {
       const b = browser(); b.ui.onModeStart('duo', ['Ada', 'Ola'], [0, 0]); b.ui.onRollClick();
