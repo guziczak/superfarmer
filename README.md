@@ -19,7 +19,7 @@ Na telefonie wygodniej otworzyć grę przez serwer lub hosting. Gra na dwóch ur
 - Nowy ekran startowy, własna ilustracja SVG i trzy czytelne karty trybów.
 - Przywrócona realistyczna oprawa: ciepłe drewno, głęboki zielony filc i światło podkreślające przestrzenny kształt przedmiotów. Faktury powstają proceduralnie i nie wymagają pobierania obrazów.
 - Miękko zaokrąglone kostki w kolorze kości słoniowej, z drobnymi nadrukami bez ozdobnych ramek i medalionów.
-- Oryginalne pełne sylwetki zwierząt, wspólne dla kostek i interfejsu.
+- Nowy komplet dziewięciu sylwetek zwierząt z naturalnymi proporcjami i wyraźnymi cechami gatunków, wspólny dla nadruków na kostkach i interfejsu.
 - Karty stad z licznikiem zebranych gatunków, paskiem postępu i numerem rundy.
 - Niższe karty graczy oraz kompaktowy panel statusu podczas rzutu, z zachowaniem wygodnych przycisków dotykowych. Zmiana panelu nie przesuwa kostek w locie ani po zatwierdzeniu wyniku.
 - Odświeżone wymiany, zasady, historia, formularze parowania oraz ekran zwycięstwa.
@@ -97,7 +97,7 @@ Uruchomione z powodzeniem:
 - 10 kontroli pamięci offline, 7 kontroli wejścia sieciowego i bufora transmisji, 15 scenariuszy cyklu życia połączenia oraz 11 asercji kodowania i odczytu QR.
 - Dotychczasowe testy geometrii, osiadania i blokowania kostek.
 
-Testy fizyki i stanu uruchamiają rzeczywiste moduły gry; platforma przeglądarki, Canvas/DOM i transport są zastępowane w testach. Oryginalne symbole i projekcję zaokrąglonych kostek dodatkowo wyrenderowano rzeczywistym Canvas 2D. Dziewięć pełnych programów shaderów, wygenerowanych przez Three.js dla sceny, skompilowano i zlinkowano przez OpenGL ES w EGL/Mesa, również z mapami faktur. Podczas zbierania shaderów kontekst WebGL był zastąpiony; ta kontrola sprawdza zgodność kodu, ale nie stanowi oględzin wyrenderowanej sceny 3D. Przeglądarka kontrolna ma wyłączony WebGL i korzysta z widoku 2D. Bezpośrednia kontrola sceny WebGL na telefonie i rzeczywiste parowanie dwóch urządzeń pozostają do sprawdzenia. Testy nie są dowodem statystycznej uczciwości kostek.
+Testy fizyki i stanu uruchamiają rzeczywiste moduły gry; platforma przeglądarki, Canvas/DOM i transport są zastępowane w testach. Symbole i projekcję zaokrąglonych kostek dodatkowo wyrenderowano rzeczywistym Canvas 2D. Nowy zestaw zwierząt sprawdzono również w rozmiarach używanych przez HUD. Dziewięć pełnych programów shaderów, wygenerowanych przez Three.js dla sceny, skompilowano i zlinkowano przez OpenGL ES w EGL/Mesa, również z mapami faktur. Podczas zbierania shaderów kontekst WebGL był zastąpiony; ta kontrola sprawdza zgodność kodu, ale nie stanowi oględzin wyrenderowanej sceny 3D. Przeglądarka kontrolna ma wyłączony WebGL i korzysta z widoku 2D. Bezpośrednia kontrola sceny WebGL na telefonie i rzeczywiste parowanie dwóch urządzeń pozostają do sprawdzenia. Testy nie są dowodem statystycznej uczciwości kostek.
 
 ## Repozytorium i hosting
 
