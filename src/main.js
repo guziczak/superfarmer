@@ -842,6 +842,9 @@
     }
 
     HUD.init({
+      onLayoutChange: function (insets) {
+        if (dice) dice.setInsets(insets);
+      },
       onRollClick: function () {
         if (!S || S.phase !== 'preroll' || isBotTurn() || (isNet() && S.cur !== NETLOCAL)) return;
         AUDIO.ui();

@@ -15,6 +15,8 @@ var HUD = (function () {
   var gainsTimer = null;
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var installPrompt = null;
+  var layoutFrame = null;
+  var lastLayout = '';
   var sheetIds = ['sheetEx', 'sheetRules', 'sheetMenu', 'sheetLog'];
 
   function esc(value) {
@@ -129,17 +131,21 @@ var HUD = (function () {
         chips += '<div class="chip" data-a="' + an + '">' + img(an, 26) + '<div class="cnt">0</div></div>';
       }
       card.innerHTML =
-        '<div class="prow"><div class="pdot" aria-hidden="true"></div><div class="pname"></div></div>' +
+        '<div class="prow"><div class="pdot" aria-hidden="true"></div><div class="pname"></div><span class="goal-count"></span></div>' +
         '<div class="chips">' + chips + '</div>' +
-        '<div class="pgoal"><span class="goal-count"></span><span class="goal-track" aria-hidden="true"><span class="goal-fill"></span></span></div>';
+        '<div class="pgoal"><span class="goal-track" aria-hidden="true"><span class="goal-fill"></span></span></div>';
       card.querySelector('.pname').textContent = p.name;
       tb.appendChild(card);
     }
+    queueLayout();
   }
 
   function refresh(S, fx) {
     var tb = $('topbar');
-    if ($('roundbadge')) $('roundbadge').textContent = 'Runda ' + S.turnCount + ' · ' + (S.mode === 'solo' ? 'Ty i Zenek' : S.mode === 'net' ? 'Wspólna gra' : 'Przy jednym stole');
+    if ($('roundbadge')) {
+      $('roundbadge').textContent = 'Runda ' + S.turnCount;
+      $('roundbadge').title = S.mode === 'solo' ? 'Ty i Zenek' : S.mode === 'net' ? 'Wspólna gra' : 'Przy jednym stole';
+    }
     tb.classList.toggle('lead0', S.cur === 0);
     tb.classList.toggle('lead1', S.cur === 1);
     for (var i = 0; i < S.players.length; i++) {
@@ -147,7 +153,10 @@ var HUD = (function () {
       var card = $('pcard' + i);
       if (!card) continue;
       var complete = RULES.WIN_ANIMALS.filter(function (animal) { return p.herd[animal] > 0; }).length;
-      card.querySelector('.goal-count').textContent = complete + ' z 5 gatunków';
+      var goalCount = card.querySelector('.goal-count');
+      goalCount.textContent = complete + '/5';
+      goalCount.title = complete + ' z 5 gatunków do wygranej';
+      goalCount.setAttribute('aria-label', goalCount.title);
       card.querySelector('.goal-fill').style.width = (complete * 20) + '%';
       card.setAttribute('aria-label', p.name + ', ' + complete + ' z 5 gatunków do wygranej' + (S.cur === i ? ', teraz gra' : ''));
       card.classList.toggle('active', S.cur === i && S.phase !== 'gameover');
@@ -157,6 +166,7 @@ var HUD = (function () {
         var an = el.getAttribute('data-a');
         var n = p.herd[an];
         el.querySelector('.cnt').textContent = n;
+        el.setAttribute('title', SYMBOLS.NAMES_PL[an][0] + ': ' + n);
         el.classList.toggle('zero', n === 0);
         var isWin = RULES.WIN_ANIMALS.indexOf(an) >= 0;
         el.classList.toggle('req', isWin && n === 0);
@@ -174,6 +184,10 @@ var HUD = (function () {
   function setDock(mode, o) {
     o = o || {};
     document.documentElement.dataset.phase = mode;
+    var dock = $('dock');
+    dock.dataset.mode = mode;
+    dock.classList.toggle('compact', mode !== 'preroll-human');
+    dock.classList.toggle('has-notice', mode === 'preroll-human' && !!o.hint);
     var ex = $('btnExchange'), roll = $('btnRoll'), hint = $('hintline');
     var show = function (el, on) { el.style.display = on ? '' : 'none'; };
     show(ex, false); show(roll, false);
@@ -183,7 +197,7 @@ var HUD = (function () {
       ex.disabled = !!o.exchangeUsed;
       ex.textContent = o.exchangeUsed ? 'Wymiana ✓' : 'Wymiana';
       roll.disabled = false;
-      hint.textContent = o.hint || 'Przeciągnij palcem po stole i puść — albo dotknij „Rzuć”.';
+      hint.textContent = o.hint || 'Przesuń kości lub wybierz „Rzuć”.';
     } else if (mode === 'rolling') {
       hint.textContent = 'Kostki w locie…';
     } else if (mode === 'held') {
@@ -193,6 +207,7 @@ var HUD = (function () {
     } else if (mode === 'resolving') {
       hint.textContent = 'Liczymy przychówek…';
     }
+    queueLayout();
   }
 
   /* ---------- baner ---------- */
@@ -275,6 +290,8 @@ var HUD = (function () {
     var f = $('feed');
     f.innerHTML = (entry.icon ? img(entry.icon, 20) : '') + '<span></span>';
     f.querySelector('span').textContent = entry.text;
+    f.title = entry.text + ' · Otwórz historię gry';
+    queueLayout();
   }
 
   function renderLog() {
@@ -562,6 +579,15 @@ var HUD = (function () {
   function init(callbacks) {
     cb = callbacks;
     buildRules();
+    // Changes to the HUD report real bounds; the scene decides when it is safe
+    // to apply them, so shrinking the dock never moves a die during a throw.
+    if (window.ResizeObserver) {
+      var layoutObserver = new ResizeObserver(queueLayout);
+      layoutObserver.observe($('topbar'));
+      layoutObserver.observe($('dock'));
+    }
+    window.addEventListener('resize', queueLayout);
+    queueLayout();
     window.addEventListener('beforeinstallprompt', function (event) {
       event.preventDefault(); installPrompt = event;
       if ($('mInstall')) $('mInstall').hidden = false;
@@ -707,7 +733,29 @@ var HUD = (function () {
   function measureInsets() {
     var top = $('topbar').getBoundingClientRect();
     var dock = $('dock').getBoundingClientRect();
-    return { top: Math.ceil(top.bottom) + 26, right: 0, bottom: Math.ceil(innerHeight - dock.top) + 6, left: 0 };
+    // A small breathing space is enough with the thinner tray rim. Reserve only
+    // what is actually visible; compact/remote states do not need a phantom row.
+    return {
+      top: Math.max(0, Math.ceil(top.bottom)) + 10,
+      right: 0,
+      bottom: Math.max(0, Math.ceil(window.innerHeight - dock.top)) + 8,
+      left: 0
+    };
+  }
+
+  function queueLayout() {
+    if (layoutFrame !== null) return;
+    layoutFrame = requestAnimationFrame(function () {
+      layoutFrame = null;
+      var insets = measureInsets();
+      var key = insets.top + ':' + insets.bottom + ':' + window.innerWidth + ':' + window.innerHeight;
+      document.documentElement.style.setProperty('--hud-top', insets.top + 'px');
+      document.documentElement.style.setProperty('--hud-bottom', insets.bottom + 'px');
+      if (key === lastLayout) return;
+      lastLayout = key;
+      if (typeof cb.onLayoutChange === 'function') cb.onLayoutChange(insets);
+      window.dispatchEvent(new CustomEvent('superfarmer:layout', { detail: insets }));
+    });
   }
 
   return {
