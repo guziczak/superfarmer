@@ -1,6 +1,7 @@
 // Exercise the production HUD with a small browser shell. This is not a layout
 // engine: CSS reflow, visual clipping, real keyboard traversal and WebGL need browser QA.
-// Static IDs come from the actual markup; HTML output is captured, not parsed.
+// Static IDs come from the actual markup. Generated menu buttons are modeled
+// to detect focus loss when their container is replaced; other HTML is captured.
 // RULES and Polish animal names/plurals are real; only sprite drawing is stubbed.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,6 +18,7 @@ function platform({ stored, blockedRead = false, blockedWrite = false, width = 1
   const storage = new Map(stored === undefined ? [] : [[PREFS, stored]]);
   const elements = new Map(), frames = new Map(), timers = new Map();
   let document;
+  let soundEnabled = true;
   let nextId = 1;
   class Target {
     listeners = new Map();
@@ -38,6 +40,7 @@ function platform({ stored, blockedRead = false, blockedWrite = false, width = 1
       this.clientWidth = width; this.clientHeight = height;
       this.rect = { left: 0, top: 0, right: width, bottom: height, width, height };
       this.textWrites = 0; this.htmlWrites = 0; this._text = ''; this._html = '';
+      this.menuButtons = []; this.parts = new Map();
       const classes = new Set();
       this.classList = {
         add: (...names) => names.forEach(name => classes.add(name)),
@@ -65,8 +68,10 @@ function platform({ stored, blockedRead = false, blockedWrite = false, width = 1
     }
     set hidden(value) { this._hidden = !!value; if (value) this.blur(); }
     get hidden() { return this._hidden; }
+    set disabled(value) { this._disabled = !!value; if (value) this.blur(); }
+    get disabled() { return this._disabled; }
     focus(options) {
-      if (this.hidden || this.style.display === 'none' || this.inert || this.disabled) return;
+      if (!this.isConnected || this.hidden || this.style.display === 'none' || this.inert || this.disabled) return;
       if (document.activeElement === this) return;
       document.activeElement = this;
       this.focusOptions = options;
@@ -77,13 +82,36 @@ function platform({ stored, blockedRead = false, blockedWrite = false, width = 1
     }
     set textContent(value) { this._text = String(value); this.textWrites++; }
     get textContent() { return this._text; }
-    set innerHTML(value) { this._html = String(value); this.htmlWrites++; }
+    set innerHTML(value) {
+      this._html = String(value); this.htmlWrites++;
+      if (this.id !== 'menuContent') return;
+      for (const button of this.menuButtons) {
+        button.isConnected = false;
+        button.blur();
+        elements.delete(button.id);
+      }
+      this.menuButtons = [];
+      for (const match of this._html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)) {
+        const id = /\bid="([^"]+)"/.exec(match[1])?.[1];
+        if (!id) continue;
+        const button = new Element(id);
+        button.hidden = /\bhidden\b/.test(match[1]);
+        for (const span of match[2].matchAll(/<span(?: class="([^"]+)")?>([^<]*)<\/span>/g)) {
+          const child = new Element('');
+          child.textContent = span[2];
+          if (!button.parts.has('span')) button.parts.set('span', child);
+          for (const name of (span[1] || '').split(/\s+/).filter(Boolean)) button.parts.set('.' + name, child);
+        }
+        this.menuButtons.push(button);
+        elements.set(id, button);
+      }
+    }
     get innerHTML() { return this._html; }
     setAttribute(name, value) { this.attributes.set(name, String(value)); }
     getAttribute(name) { return this.attributes.get(name) ?? null; }
     getBoundingClientRect() { return this.rect; }
     getClientRects() { return this.hidden || this.style.display === 'none' ? [] : [this.rect]; }
-    querySelector() { return null; }
+    querySelector(selector) { return this.parts.get(selector) || null; }
     querySelectorAll() { return []; }
   }
   for (const match of markup.matchAll(/\bid="([^"]+)"/g)) elements.set(match[1], new Element(match[1]));
@@ -113,14 +141,14 @@ function platform({ stored, blockedRead = false, blockedWrite = false, width = 1
     setTimeout(callback) { const id = nextId++; timers.set(id, callback); return id; },
     clearTimeout: id => timers.delete(id),
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
-    AUDIO: { ui() {} }
+    AUDIO: { ui() {}, isEnabled: () => soundEnabled, setEnabled: value => { soundEnabled = !!value; } }
   });
   for (const [file, source] of sources) {
     vm.runInContext(source, context, { filename: file });
     if (file === 'symbols.js') context.SYMBOLS.sprite = symbol => 'data:image/png;stub,' + symbol;
   }
   return {
-    HUD: context.HUD, RULES: context.RULES, document, window, storage,
+    HUD: context.HUD, RULES: context.RULES, AUDIO: context.AUDIO, document, window, storage,
     el: id => elements.get(id),
     frame() { const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback()); },
     finishTimers() { const pending = [...timers.values()]; timers.clear(); pending.forEach(callback => callback()); }
@@ -346,6 +374,83 @@ test('refreshing an available dock action preserves focus without temporarily hi
     b.HUD.setDock(mode);
     assert.equal(b.document.activeElement, b.el(id));
     assert.equal(focuses.length, 0, 'the visible action never loses and regains focus');
+  }
+});
+
+test('a completed exchange moves focus to Roll while an available exchange keeps focus', () => {
+  const b = platform();
+  b.HUD.init({});
+  b.HUD.setDock('preroll-human');
+  b.el('btnExchange').focus();
+  b.HUD.setDock('preroll-human');
+  assert.equal(b.document.activeElement, b.el('btnExchange'), 'refreshing does not skip an available exchange');
+  b.HUD.openSheet('sheetEx');
+  b.HUD.closeSheets();
+  assert.equal(b.document.activeElement, b.el('btnExchange'), 'the dialog restores its trigger before consuming the exchange');
+  b.HUD.setDock('preroll-human', { exchangeUsed: true });
+  assert.equal(b.el('btnExchange').disabled, true);
+  assert.equal(b.document.activeElement, b.el('btnRoll'), 'the disabled exchange cannot leave focus on the body');
+  b.el('btnMenu').focus();
+  b.HUD.setDock('preroll-human', { exchangeUsed: true });
+  assert.equal(b.document.activeElement, b.el('btnMenu'), 'an unrelated focused control is left alone');
+});
+
+test('an exchange hidden during a throw uses the result focus without interrupting a dialog', () => {
+  const b = platform();
+  b.HUD.init({});
+  b.HUD.setDock('preroll-human');
+  b.el('btnExchange').focus();
+  b.HUD.setDock('rolling');
+  assert.equal(b.document.activeElement, b.el('lastRollList'));
+  b.HUD.setDock('preroll-human');
+  assert.equal(b.document.activeElement, b.el('btnRoll'));
+  b.el('btnExchange').focus();
+  b.HUD.openSheet('sheetReadability');
+  const dialogFocus = b.document.activeElement;
+  b.HUD.setDock('rolling');
+  assert.equal(b.document.activeElement, dialogFocus);
+});
+
+test('the sound toggle updates its accessible state without replacing the focused menu button', () => {
+  const b = platform();
+  b.HUD.init({ onSoundToggle: () => b.AUDIO.setEnabled(!b.AUDIO.isEnabled()) });
+  b.HUD.buildMenu(state(b));
+  b.el('btnMenu').focus();
+  b.HUD.openSheet('sheetMenu');
+  const button = b.el('mSound');
+  button.focus();
+  assert.equal(button.getAttribute('aria-pressed'), 'true');
+  assert.equal(button.querySelector('.state').textContent, 'włączony');
+  for (const enabled of [false, true]) {
+    button.emit('click');
+    assert.equal(b.AUDIO.isEnabled(), enabled);
+    assert.equal(b.el('mSound'), button, 'the existing menu control survives each toggle');
+    assert.equal(b.document.activeElement, button);
+    assert.equal(button.getAttribute('aria-pressed'), String(enabled));
+    assert.equal(button.querySelector('.state').textContent, enabled ? 'włączony' : 'wyłączony');
+  }
+  b.HUD.closeSheets();
+  assert.equal(b.document.activeElement, b.el('btnMenu'));
+});
+
+test('player setup forms focus their input and return to the selected mode on Back', () => {
+  for (const [mode, form, input, back] of [
+    ['btnDuo', 'nameform', 'inpName1', 'btnDuoBack'],
+    ['btnNet', 'netform', 'inpNetName', 'btnNetBack']
+  ]) {
+    const b = platform();
+    b.HUD.init({});
+    b.el(mode).focus();
+    b.el(mode).emit('click');
+    assert.equal(b.el('modeButtons').hidden, true);
+    assert.equal(b.el(form).hidden, false);
+    assert.equal(b.document.activeElement, b.el(input), 'entry places focus in the revealed form');
+    b.el(back).focus();
+    b.el(back).emit('click');
+    assert.equal(b.el(form).hidden, true);
+    assert.equal(b.el('modeButtons').hidden, false);
+    assert.equal(b.document.activeElement, b.el(mode), 'Back restores the mode button instead of a hidden form control');
+    assert.equal(b.el('startov').classList.contains('compact'), false);
   }
 });
 

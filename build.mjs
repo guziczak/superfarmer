@@ -83,7 +83,6 @@ ${fonts}
 <style>${css}</style>
 </head>
 <body>
-<noscript><p style="padding:32px;font:18px system-ui;color:#183d32;background:#f7f3e8">Superfarmer potrzebuje JavaScript. Włącz go w przeglądarce i wróć do wspólnego stołu.</p></noscript>
 ${markup}
 ${scripts}
 <script>

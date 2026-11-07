@@ -350,8 +350,9 @@ var HUD = (function () {
     dock.classList.toggle('has-notice', mode === 'preroll-human' && !!o.hint);
     var ex = $('btnExchange'), roll = $('btnRoll'), next = $('btnContinue'), hint = $('hintline');
     var focusAnchor = $('lastRollList'), active = document.activeElement;
+    var exchangeLosesFocus = active === ex && (mode !== 'preroll-human' || !!o.exchangeUsed);
     var followAction = !sheetOpen && !$('hud').inert &&
-      (active === roll || active === next || (pendingDockFocus && active === focusAnchor));
+      (active === roll || active === next || exchangeLosesFocus || (pendingDockFocus && active === focusAnchor));
     pendingDockFocus = false;
     var show = function (el, on) { el.style.display = on ? '' : 'none'; };
     show(ex, mode === 'preroll-human'); show(roll, mode === 'preroll-human');
@@ -373,8 +374,8 @@ var HUD = (function () {
     } else if (mode === 'await-next') {
       hint.textContent = 'Wynik zapisany. Wybierz „Dalej”, gdy go przeczytasz.';
     }
-    // Rzuć i Dalej znikają podczas zmiany tury. Zachowaj miejsce klawiatury
-    // przy wyniku i wróć do następnej akcji tylko, jeśli gracz stąd nie odszedł.
+    // Gdy akcja znika albo zużyta wymiana zostaje wyłączona, zachowaj miejsce
+    // klawiatury przy wyniku lub następnej akcji, jeśli gracz stąd nie odszedł.
     if (followAction && mode !== 'off') {
       var action = mode === 'preroll-human' ? roll : mode === 'await-next' ? next : null;
       var target = action || focusAnchor;
@@ -622,9 +623,13 @@ var HUD = (function () {
       '<button class="menurow" id="mBack"><span>' + (S && S.mode === 'net' ? 'Opuść grę' : 'Zapisz i wróć do menu') + '</span><span class="state">↗</span></button>' +
       '<button class="menurow" id="mRestart"><span>Nowa gra</span><span class="state">od początku</span></button>';
     $('mReadability').addEventListener('click', openReadability);
-    $('mSound').addEventListener('click', function () {
+    var soundButton = $('mSound');
+    soundButton.setAttribute('aria-pressed', String(AUDIO.isEnabled()));
+    soundButton.addEventListener('click', function () {
       cb.onSoundToggle();
-      buildMenu(S);
+      var enabled = AUDIO.isEnabled();
+      soundButton.querySelector('.state').textContent = enabled ? 'włączony' : 'wyłączony';
+      soundButton.setAttribute('aria-pressed', String(enabled));
     });
     $('mRules').addEventListener('click', function () { openSheet('sheetRules'); });
     $('mLog').addEventListener('click', function () { renderLog(); openSheet('sheetLog'); });
@@ -856,6 +861,7 @@ var HUD = (function () {
     $('btnDuoBack').addEventListener('click', function () {
       $('nameform').hidden = true;
       $('modeButtons').hidden = false;
+      $('btnDuo').focus();
     });
     $('btnNet').addEventListener('click', function () {
       AUDIO.ui();
@@ -865,11 +871,13 @@ var HUD = (function () {
       // Android zdradza typ łącza; iOS nie ma tego API (wtedy zostaje stała podpowiedź niżej)
       var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
       $('netWarn').hidden = !(conn && conn.type === 'cellular');
+      $('inpNetName').focus();
     });
     $('btnNetBack').addEventListener('click', function () {
       $('netform').hidden = true;
       $('modeButtons').hidden = false;
       $('startov').classList.remove('compact');
+      $('btnNet').focus();
     });
     $('btnNetResume').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
     $('btnNetResume0').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });

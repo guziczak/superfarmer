@@ -11,7 +11,7 @@
   </defs>
 </svg>
 
-<div id="hud">
+<div id="hud" inert>
   <header id="topbar" aria-label="Stada graczy"></header>
   <div id="netdot" hidden role="status"><span class="dot"></span><span id="netdotTxt">online</span></div>
   <div id="tableStage">
@@ -105,7 +105,7 @@
 
 <canvas id="confetti" aria-hidden="true"></canvas>
 
-<section id="startov" class="overlay" aria-labelledby="startTitle">
+<section id="startov" class="overlay show" aria-labelledby="startTitle">
   <div class="start-shell">
     <header class="start-masthead">
       <div class="wordmark" aria-label="Superfarmer 3D">
@@ -164,7 +164,12 @@
           <span class="section-kicker">Miejsce przy stole czeka</span>
           <h2 class="display">Z kim dziś grasz?</h2>
         </div>
-        <div class="modes" id="modeButtons">
+        <div id="startupStatus">
+          <p id="startupMessage" class="sub" role="status" aria-live="polite" aria-atomic="true">Przygotowuję grę…</p>
+          <button id="btnRetryArtwork" type="button" class="btn pri" hidden>Spróbuj ponownie</button>
+          <noscript><style>#startupMessage { display: none; }</style><p class="sub">Superfarmer potrzebuje JavaScript. Włącz go w przeglądarce i odśwież stronę, aby zagrać.</p></noscript>
+        </div>
+        <div class="modes" id="modeButtons" hidden>
           <button id="btnNetResume0" type="button" class="btn resume-choice" hidden></button>
           <button id="btnResume" type="button" class="btn resume-choice" hidden>Wznów grę</button>
           <button id="btnSolo" type="button" class="btn pri mode-card">
@@ -252,7 +257,7 @@
           <p class="advnote"><b>Ciężarek</b> przesuwa środek masy; plomba pokazuje jego położenie. <b>Szlif</b> zmienia kształt przeciwległej ścianki. Podane szanse są przybliżeniami z symulacji.</p>
         </div>
 
-        <nav class="linkrow" aria-label="Opcje gry">
+        <nav id="startOptions" class="linkrow" aria-label="Opcje gry" hidden>
           <button class="link readability-link" id="btnReadability0" type="button" aria-haspopup="dialog" aria-controls="sheetReadability"><span class="readability-mark" aria-hidden="true">Aa</span><span>Czytelność</span></button>
           <button class="link" id="btnRules0" type="button">Jak grać</button>
           <button class="link" id="btnAdv" type="button" aria-controls="advpanel" aria-expanded="false">Kostki</button>

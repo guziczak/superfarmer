@@ -1,7 +1,7 @@
 // Cache wyłącznie plików tej gry, w obrębie jej własnej ścieżki.
 const SCOPE = new URL(self.registration.scope);
 const PREFIX = 'sf3d-v2-' + encodeURIComponent(SCOPE.pathname) + '-';
-const CACHE = PREFIX + '6a18b3b0ad';
+const CACHE = PREFIX + '450a396c21';
 const FILES = ['./', './manifest.webmanifest', './icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 const PATHS = FILES.concat(['./index.html']).map((path) => new URL(path, SCOPE).pathname);
 

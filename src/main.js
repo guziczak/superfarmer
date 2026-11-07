@@ -887,8 +887,7 @@
 
     atlas = SYMBOLS.buildAtlas(2048);
 
-    try {
-      dice = new DiceScene({
+    dice = new DiceScene({
         canvas: document.getElementById('scene3d'),
         atlasCanvas: atlas,
         symbolsA: RULES.DIE_A,
@@ -931,14 +930,7 @@
             if (isNetLocalTurn()) startNetStream();
           }
         }
-      });
-    } catch (err) {
-      document.getElementById('hud').innerHTML =
-        '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:30px;text-align:center;font-size:16px;color:#f3e8d2">' +
-        'Ta przeglądarka nie udostępnia grafiki potrzebnej do gry. Odśwież stronę lub otwórz ją w aktualnej przeglądarce.' +
-        '</div>';
-      return;
-    }
+    });
 
     HUD.init({
       onLayoutChange: syncInsets,
@@ -1062,25 +1054,50 @@
 
   // Atlas i sprite'y powstają dopiero po zdekodowaniu ilustracji. Dzięki temu
   // ani cache HUD-u, ani tekstura kostek nie mogą zapamiętać pustego obrazu.
-  var artworkLoading = false, booted = false, startChoices = null;
+  var artworkLoading = false, booted = false;
+  function showStartupError(message, reload) {
+    artworkLoading = false;
+    // Nie usuwaj HUD-u: scena lub obserwatory mogły już zachować jego elementy.
+    // Po częściowej inicjalizacji ponawiamy całe uruchomienie przez odświeżenie.
+    document.getElementById('hud').inert = true;
+    document.getElementById('startov').classList.add('show');
+    document.getElementById('startupStatus').hidden = false;
+    document.getElementById('modeButtons').hidden = true;
+    document.getElementById('startOptions').hidden = true;
+    document.getElementById('startupMessage').textContent = message;
+    var retry = document.getElementById('btnRetryArtwork');
+    retry.textContent = reload ? 'Odśwież grę' : 'Spróbuj ponownie';
+    retry.hidden = false;
+    retry.onclick = reload ? function () { location.reload(); } : startWithArtwork;
+  }
   function startWithArtwork() {
     if (artworkLoading || booted) return;
     artworkLoading = true;
-    var choices = document.getElementById('modeButtons');
-    if (startChoices === null) startChoices = choices.innerHTML;
-    choices.innerHTML = '<p class="sub" role="status">Przygotowuję ilustracje zwierząt…</p>';
+    var retry = document.getElementById('btnRetryArtwork');
+    var returnFocus = document.activeElement === retry;
+    retry.hidden = true;
+    document.getElementById('startupMessage').textContent = 'Przygotowuję ilustracje zwierząt…';
     SYMBOLS.load(function () {
       if (!artworkLoading || booted) return;
-      artworkLoading = false;
-      booted = true;
-      choices.innerHTML = startChoices;
-      boot();
+      try {
+        boot();
+        booted = true;
+        artworkLoading = false;
+        document.getElementById('startupStatus').hidden = true;
+        document.getElementById('startOptions').hidden = false;
+        if (returnFocus) {
+          var resume = document.getElementById('btnResume');
+          (resume.hidden ? document.getElementById('btnSolo') : resume).focus({ preventScroll: true });
+        }
+      } catch (error) {
+        showStartupError('Nie udało się przygotować gry. Odśwież stronę, aby spróbować ponownie. Zapisana partia pozostaje na tym urządzeniu.', true);
+        if (returnFocus) retry.focus({ preventScroll: true });
+        console.error('Superfarmer: błąd uruchamiania gry.', error);
+      }
     }, function () {
       if (!artworkLoading || booted) return;
-      artworkLoading = false;
-      choices.innerHTML = '<p class="sub" role="alert">Nie udało się wczytać ilustracji zwierząt.</p>' +
-        '<button id="btnRetryArtwork" type="button" class="btn pri">Spróbuj ponownie</button>';
-      document.getElementById('btnRetryArtwork').onclick = startWithArtwork;
+      showStartupError('Nie udało się wczytać ilustracji zwierząt. Spróbuj ponownie.', false);
+      if (returnFocus) retry.focus({ preventScroll: true });
     });
   }
 

@@ -10,6 +10,7 @@ const NETWORK = 'sf3d.netsave.v1';
 const sources = ['rules.js', 'ai.js', 'main.js'].map(file => ({
   file, text: fs.readFileSync(path.join(__dirname, '../src', file), 'utf8')
 }));
+const markup = fs.readFileSync(path.join(__dirname, '../src/markup.html'), 'utf8');
 const copy = value => JSON.parse(JSON.stringify(value));
 const h = values => ({ ...RULES.emptyHerd(), ...values });
 
@@ -27,25 +28,53 @@ function saved(s) { return new Map([[LOCAL, JSON.stringify(s)]]); }
 
 function browser(storage = new Map(), options = {}) {
   let ui, callbacks, scene, now = 0, timerId = 0;
-  let artworkCallbacks, artworkLoads = 0, atlasCount = 0;
+  let artworkCallbacks, artworkLoads = 0, atlasCount = 0, reloads = 0;
   let readability = { readable: false, scale: 100, calm: !!options.calm };
-  const timers = new Map(), elements = new Map(), windowEvents = new Map(), calls = [], sent = [];
+  const timers = new Map(), elements = new Map(), windowEvents = new Map(), calls = [], sent = [], errors = [];
   const record = (name, args) => calls.push({ name, args: copy(args) });
   const el = id => {
-    if (!elements.has(id)) elements.set(id, {
-      id, hidden: false, value: '', textContent: '', innerHTML: '', dataset: {},
-      classList: { add() {}, remove() {}, toggle() {} }, addEventListener() {}
-    });
+    if (!elements.has(id)) {
+      const classes = new Set();
+      elements.set(id, {
+        id, hidden: false, value: '', textContent: '', innerHTML: '', dataset: {},
+        classList: {
+          add(...names) { names.forEach(name => classes.add(name)); },
+          remove(...names) { names.forEach(name => classes.delete(name)); },
+          contains(name) { return classes.has(name); },
+          toggle(name, force) {
+            const on = force === undefined ? !classes.has(name) : !!force;
+            if (on) classes.add(name); else classes.delete(name);
+            return on;
+          }
+        },
+        addEventListener() {},
+        focus() { document.activeElement = this; }
+      });
+    }
     return elements.get(id);
   };
+  // Preserve the actual initial visibility: text inside a hidden overlay is
+  // not an accessible loading/error screen, even if its string is correct.
+  for (const match of markup.matchAll(/<[^>]+\bid="([^"]+)"[^>]*>/g)) {
+    const node = el(match[1]);
+    node.hidden = /\shidden(?:[\s=>])/.test(match[0]);
+    node.inert = /\sinert(?:[\s=>])/.test(match[0]);
+    node.classList.add(...(match[0].match(/\bclass="([^"]+)"/)?.[1] || '').split(/\s+/).filter(Boolean));
+  }
   const HUD = new Proxy({
-    init(cbs) { ui = cbs; },
+    init(cbs) { if (options.failHUD) throw new Error('HUD initialization failed'); ui = cbs; },
+    showStart(...args) {
+      el('startov').classList.add('show'); el('modeButtons').hidden = false;
+      el('btnResume').hidden = !args[0].canResume;
+      record('showStart', args);
+    },
     getReadability() { return { ...readability }; },
     measureInsets() { return { top: 0, bottom: 0 }; },
     eventBig(...args) { record('eventBig', args); return Promise.resolve(); }
   }, { get(target, key) { return key in target ? target[key] : (...args) => record(key, args); } });
   class DiceScene {
     constructor(config) {
+      if (options.failScene) throw new Error('Renderer unavailable');
       this.config = config; this.throws = 0; this.frames = 0; this.busy = false;
       this.canvas = config.canvas; this.canvas.clientWidth = 800; this.canvas.clientHeight = 600;
       this.resizeCount = 0; this.resizes = []; this.insetCalls = []; this.remoteEnds = 0;
@@ -79,7 +108,8 @@ function browser(storage = new Map(), options = {}) {
     getElementById: el, addEventListener() {}
   };
   const context = {
-    console, document, location: { search: '' }, navigator: {},
+    console: { ...console, error(...args) { errors.push(args); } }, document,
+    location: { search: '', reload() { reloads++; } }, navigator: {},
     window: { addEventListener(type, callback) { windowEvents.set(type, callback); } },
     localStorage: {
       getItem(key) { return storage.get(key) ?? null; },
@@ -95,7 +125,10 @@ function browser(storage = new Map(), options = {}) {
         artworkCallbacks = { done, onError }; artworkLoads++;
         if (!options.deferArtwork) done();
       },
-      buildAtlas() { atlasCount++; return {}; }, plural(sym) { return sym; },
+      buildAtlas() {
+        if (options.failAtlas) throw new Error('Atlas unavailable');
+        atlasCount++; return {};
+      }, plural(sym) { return sym; },
       NAMES_PL: Object.fromEntries([...RULES.ANIMALS, 'fox', 'wolf'].map(a => [a, [a]]))
     },
     AUDIO: new Proxy({ isEnabled() { return true; } }, {
@@ -125,7 +158,8 @@ function browser(storage = new Map(), options = {}) {
   }
   return {
     get ui() { return ui; }, get scene() { return scene; },
-    calls, sent, storage, document, advance, microtasks,
+    calls, sent, storage, document, advance, microtasks, errors,
+    get reloads() { return reloads; },
     get artworkLoads() { return artworkLoads; }, get atlasCount() { return atlasCount; },
     resolveArtwork() { artworkCallbacks.done(); },
     rejectArtwork() { artworkCallbacks.onError(new Error('Artwork unavailable')); },
@@ -165,10 +199,18 @@ async function test(name, run) {
     assert.equal(b.ui, undefined);
     assert.equal(b.scene, undefined);
     assert.equal(b.atlasCount, 0);
-    assert.match(b.document.getElementById('modeButtons').innerHTML, /Przygotowuję ilustracje/);
+    assert.equal(b.document.getElementById('startov').classList.contains('show'), true);
+    assert.equal(b.document.getElementById('startupStatus').hidden, false);
+    assert.equal(b.document.getElementById('hud').inert, true);
+    assert.equal(b.document.getElementById('modeButtons').hidden, true);
+    assert.equal(b.document.getElementById('startOptions').hidden, true);
+    assert.match(b.document.getElementById('startupMessage').textContent, /Przygotowuję ilustracje/);
     b.resolveArtwork();
     assert.ok(b.ui && b.scene);
     assert.equal(b.atlasCount, 1);
+    assert.equal(b.document.getElementById('startupStatus').hidden, true);
+    assert.equal(b.document.getElementById('modeButtons').hidden, false);
+    assert.equal(b.document.getElementById('startOptions').hidden, false);
     const scene = b.scene;
     b.resolveArtwork();
     assert.equal(b.scene, scene);
@@ -181,13 +223,54 @@ async function test(name, run) {
     assert.equal(b.ui, undefined);
     assert.equal(b.scene, undefined);
     assert.equal(b.atlasCount, 0);
-    assert.match(b.document.getElementById('modeButtons').innerHTML, /Nie udało się/);
+    assert.equal(b.document.getElementById('startov').classList.contains('show'), true);
+    assert.equal(b.document.getElementById('startupStatus').hidden, false);
+    assert.equal(b.document.getElementById('modeButtons').hidden, true);
+    assert.equal(b.document.getElementById('startOptions').hidden, true);
+    assert.equal(b.document.getElementById('btnRetryArtwork').hidden, false);
+    assert.match(b.document.getElementById('startupMessage').textContent, /Nie udało się/);
+    b.document.getElementById('btnRetryArtwork').focus();
     b.document.getElementById('btnRetryArtwork').onclick();
     assert.equal(b.artworkLoads, 2);
     assert.equal(b.atlasCount, 0);
     b.resolveArtwork();
     assert.ok(b.ui && b.scene);
     assert.equal(b.atlasCount, 1);
+    assert.equal(b.document.activeElement.id, 'btnSolo');
+  });
+
+  await test('startup failures keep a visible recovery action and preserve the saved game and HUD', () => {
+    for (const failure of ['failAtlas', 'failScene', 'failHUD']) {
+      const state = position('solo');
+      const storage = saved(state);
+      const b = browser(storage, { [failure]: true });
+      assert.equal(b.document.getElementById('startov').classList.contains('show'), true, failure);
+      assert.equal(b.document.getElementById('startupStatus').hidden, false, failure);
+      assert.equal(b.document.getElementById('modeButtons').hidden, true, failure);
+      assert.equal(b.document.getElementById('startOptions').hidden, true, failure);
+      assert.equal(b.document.getElementById('hud').inert, true, failure);
+      assert.equal(b.document.getElementById('hud').innerHTML, '', 'do not replace the HUD');
+      assert.match(b.document.getElementById('startupMessage').textContent, /Odśwież stronę/, failure);
+      const retry = b.document.getElementById('btnRetryArtwork');
+      assert.equal(retry.hidden, false, failure);
+      assert.equal(retry.textContent, 'Odśwież grę', failure);
+      assert.equal(b.errors.length, 1, failure);
+      retry.onclick();
+      assert.equal(b.reloads, 1, failure);
+      assert.deepEqual(JSON.parse(storage.get(LOCAL)), state, failure);
+    }
+  });
+
+  await test('keyboard retry keeps focus on recovery or the existing saved-game action', () => {
+    for (const failScene of [false, true]) {
+      const b = browser(saved(position('solo')), { deferArtwork: true, failScene });
+      b.rejectArtwork();
+      const retry = b.document.getElementById('btnRetryArtwork');
+      retry.focus(); retry.onclick();
+      b.resolveArtwork();
+      assert.equal(b.document.activeElement.id, failScene ? 'btnRetryArtwork' : 'btnResume');
+      assert.equal(b.document.activeElement.hidden, false);
+    }
   });
 
   await test('idle accessibility layout resizes a changed canvas without a window event, but insets alone do not', () => {

@@ -662,7 +662,7 @@ html[data-readable="true"][data-ui-scale="150"] .chips, html[data-readable="true
   </defs>
 </svg>
 
-<div id="hud">
+<div id="hud" inert>
   <header id="topbar" aria-label="Stada graczy"></header>
   <div id="netdot" hidden role="status"><span class="dot"></span><span id="netdotTxt">online</span></div>
   <div id="tableStage">
@@ -756,7 +756,7 @@ html[data-readable="true"][data-ui-scale="150"] .chips, html[data-readable="true
 
 <canvas id="confetti" aria-hidden="true"></canvas>
 
-<section id="startov" class="overlay" aria-labelledby="startTitle">
+<section id="startov" class="overlay show" aria-labelledby="startTitle">
   <div class="start-shell">
     <header class="start-masthead">
       <div class="wordmark" aria-label="Superfarmer 3D">
@@ -815,7 +815,12 @@ html[data-readable="true"][data-ui-scale="150"] .chips, html[data-readable="true
           <span class="section-kicker">Miejsce przy stole czeka</span>
           <h2 class="display">Z kim dziś grasz?</h2>
         </div>
-        <div class="modes" id="modeButtons">
+        <div id="startupStatus">
+          <p id="startupMessage" class="sub" role="status" aria-live="polite" aria-atomic="true">Przygotowuję grę…</p>
+          <button id="btnRetryArtwork" type="button" class="btn pri" hidden>Spróbuj ponownie</button>
+          <noscript><style>#startupMessage { display: none; }</style><p class="sub">Superfarmer potrzebuje JavaScript. Włącz go w przeglądarce i odśwież stronę, aby zagrać.</p></noscript>
+        </div>
+        <div class="modes" id="modeButtons" hidden>
           <button id="btnNetResume0" type="button" class="btn resume-choice" hidden></button>
           <button id="btnResume" type="button" class="btn resume-choice" hidden>Wznów grę</button>
           <button id="btnSolo" type="button" class="btn pri mode-card">
@@ -903,7 +908,7 @@ html[data-readable="true"][data-ui-scale="150"] .chips, html[data-readable="true
           <p class="advnote"><b>Ciężarek</b> przesuwa środek masy; plomba pokazuje jego położenie. <b>Szlif</b> zmienia kształt przeciwległej ścianki. Podane szanse są przybliżeniami z symulacji.</p>
         </div>
 
-        <nav class="linkrow" aria-label="Opcje gry">
+        <nav id="startOptions" class="linkrow" aria-label="Opcje gry" hidden>
           <button class="link readability-link" id="btnReadability0" type="button" aria-haspopup="dialog" aria-controls="sheetReadability"><span class="readability-mark" aria-hidden="true">Aa</span><span>Czytelność</span></button>
           <button class="link" id="btnRules0" type="button">Jak grać</button>
           <button class="link" id="btnAdv" type="button" aria-controls="advpanel" aria-expanded="false">Kostki</button>
@@ -29644,8 +29649,9 @@ var HUD = (function () {
     dock.classList.toggle('has-notice', mode === 'preroll-human' && !!o.hint);
     var ex = $('btnExchange'), roll = $('btnRoll'), next = $('btnContinue'), hint = $('hintline');
     var focusAnchor = $('lastRollList'), active = document.activeElement;
+    var exchangeLosesFocus = active === ex && (mode !== 'preroll-human' || !!o.exchangeUsed);
     var followAction = !sheetOpen && !$('hud').inert &&
-      (active === roll || active === next || (pendingDockFocus && active === focusAnchor));
+      (active === roll || active === next || exchangeLosesFocus || (pendingDockFocus && active === focusAnchor));
     pendingDockFocus = false;
     var show = function (el, on) { el.style.display = on ? '' : 'none'; };
     show(ex, mode === 'preroll-human'); show(roll, mode === 'preroll-human');
@@ -29667,8 +29673,8 @@ var HUD = (function () {
     } else if (mode === 'await-next') {
       hint.textContent = 'Wynik zapisany. Wybierz „Dalej”, gdy go przeczytasz.';
     }
-    // Rzuć i Dalej znikają podczas zmiany tury. Zachowaj miejsce klawiatury
-    // przy wyniku i wróć do następnej akcji tylko, jeśli gracz stąd nie odszedł.
+    // Gdy akcja znika albo zużyta wymiana zostaje wyłączona, zachowaj miejsce
+    // klawiatury przy wyniku lub następnej akcji, jeśli gracz stąd nie odszedł.
     if (followAction && mode !== 'off') {
       var action = mode === 'preroll-human' ? roll : mode === 'await-next' ? next : null;
       var target = action || focusAnchor;
@@ -29916,9 +29922,13 @@ var HUD = (function () {
       '<button class="menurow" id="mBack"><span>' + (S && S.mode === 'net' ? 'Opuść grę' : 'Zapisz i wróć do menu') + '</span><span class="state">↗</span></button>' +
       '<button class="menurow" id="mRestart"><span>Nowa gra</span><span class="state">od początku</span></button>';
     $('mReadability').addEventListener('click', openReadability);
-    $('mSound').addEventListener('click', function () {
+    var soundButton = $('mSound');
+    soundButton.setAttribute('aria-pressed', String(AUDIO.isEnabled()));
+    soundButton.addEventListener('click', function () {
       cb.onSoundToggle();
-      buildMenu(S);
+      var enabled = AUDIO.isEnabled();
+      soundButton.querySelector('.state').textContent = enabled ? 'włączony' : 'wyłączony';
+      soundButton.setAttribute('aria-pressed', String(enabled));
     });
     $('mRules').addEventListener('click', function () { openSheet('sheetRules'); });
     $('mLog').addEventListener('click', function () { renderLog(); openSheet('sheetLog'); });
@@ -30150,6 +30160,7 @@ var HUD = (function () {
     $('btnDuoBack').addEventListener('click', function () {
       $('nameform').hidden = true;
       $('modeButtons').hidden = false;
+      $('btnDuo').focus();
     });
     $('btnNet').addEventListener('click', function () {
       AUDIO.ui();
@@ -30159,11 +30170,13 @@ var HUD = (function () {
       // Android zdradza typ łącza; iOS nie ma tego API (wtedy zostaje stała podpowiedź niżej)
       var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
       $('netWarn').hidden = !(conn && conn.type === 'cellular');
+      $('inpNetName').focus();
     });
     $('btnNetBack').addEventListener('click', function () {
       $('netform').hidden = true;
       $('modeButtons').hidden = false;
       $('startov').classList.remove('compact');
+      $('btnNet').focus();
     });
     $('btnNetResume').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
     $('btnNetResume0').addEventListener('click', function () { AUDIO.ui(); cb.onNetResume(); });
@@ -31190,8 +31203,7 @@ var HUD = (function () {
 
     atlas = SYMBOLS.buildAtlas(2048);
 
-    try {
-      dice = new DiceScene({
+    dice = new DiceScene({
         canvas: document.getElementById('scene3d'),
         atlasCanvas: atlas,
         symbolsA: RULES.DIE_A,
@@ -31234,14 +31246,7 @@ var HUD = (function () {
             if (isNetLocalTurn()) startNetStream();
           }
         }
-      });
-    } catch (err) {
-      document.getElementById('hud').innerHTML =
-        '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:30px;text-align:center;font-size:16px;color:#f3e8d2">' +
-        'Ta przeglądarka nie udostępnia grafiki potrzebnej do gry. Odśwież stronę lub otwórz ją w aktualnej przeglądarce.' +
-        '</div>';
-      return;
-    }
+    });
 
     HUD.init({
       onLayoutChange: syncInsets,
@@ -31365,25 +31370,50 @@ var HUD = (function () {
 
   // Atlas i sprite'y powstają dopiero po zdekodowaniu ilustracji. Dzięki temu
   // ani cache HUD-u, ani tekstura kostek nie mogą zapamiętać pustego obrazu.
-  var artworkLoading = false, booted = false, startChoices = null;
+  var artworkLoading = false, booted = false;
+  function showStartupError(message, reload) {
+    artworkLoading = false;
+    // Nie usuwaj HUD-u: scena lub obserwatory mogły już zachować jego elementy.
+    // Po częściowej inicjalizacji ponawiamy całe uruchomienie przez odświeżenie.
+    document.getElementById('hud').inert = true;
+    document.getElementById('startov').classList.add('show');
+    document.getElementById('startupStatus').hidden = false;
+    document.getElementById('modeButtons').hidden = true;
+    document.getElementById('startOptions').hidden = true;
+    document.getElementById('startupMessage').textContent = message;
+    var retry = document.getElementById('btnRetryArtwork');
+    retry.textContent = reload ? 'Odśwież grę' : 'Spróbuj ponownie';
+    retry.hidden = false;
+    retry.onclick = reload ? function () { location.reload(); } : startWithArtwork;
+  }
   function startWithArtwork() {
     if (artworkLoading || booted) return;
     artworkLoading = true;
-    var choices = document.getElementById('modeButtons');
-    if (startChoices === null) startChoices = choices.innerHTML;
-    choices.innerHTML = '<p class="sub" role="status">Przygotowuję ilustracje zwierząt…</p>';
+    var retry = document.getElementById('btnRetryArtwork');
+    var returnFocus = document.activeElement === retry;
+    retry.hidden = true;
+    document.getElementById('startupMessage').textContent = 'Przygotowuję ilustracje zwierząt…';
     SYMBOLS.load(function () {
       if (!artworkLoading || booted) return;
-      artworkLoading = false;
-      booted = true;
-      choices.innerHTML = startChoices;
-      boot();
+      try {
+        boot();
+        booted = true;
+        artworkLoading = false;
+        document.getElementById('startupStatus').hidden = true;
+        document.getElementById('startOptions').hidden = false;
+        if (returnFocus) {
+          var resume = document.getElementById('btnResume');
+          (resume.hidden ? document.getElementById('btnSolo') : resume).focus({ preventScroll: true });
+        }
+      } catch (error) {
+        showStartupError('Nie udało się przygotować gry. Odśwież stronę, aby spróbować ponownie. Zapisana partia pozostaje na tym urządzeniu.', true);
+        if (returnFocus) retry.focus({ preventScroll: true });
+        console.error('Superfarmer: błąd uruchamiania gry.', error);
+      }
     }, function () {
       if (!artworkLoading || booted) return;
-      artworkLoading = false;
-      choices.innerHTML = '<p class="sub" role="alert">Nie udało się wczytać ilustracji zwierząt.</p>' +
-        '<button id="btnRetryArtwork" type="button" class="btn pri">Spróbuj ponownie</button>';
-      document.getElementById('btnRetryArtwork').onclick = startWithArtwork;
+      showStartupError('Nie udało się wczytać ilustracji zwierząt. Spróbuj ponownie.', false);
+      if (returnFocus) retry.focus({ preventScroll: true });
     });
   }
 

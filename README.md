@@ -64,6 +64,8 @@ Spokojne tempo daje czas na odczyt po każdym rzucie, także rzucie Zenka. Włą
 
 W wersji 2.3.1 przyciemniono także drobne podpisy w domyślnym widoku, opisy ustawień i podpowiedzi w polach. Po użyciu przycisku „Rzuć” lub „Dalej” fokus klawiatury pozostaje w rozgrywce, gdy ten przycisk znika. Otwarcie dialogu lub samodzielne przejście do innego elementu przerywa automatyczne przenoszenie fokusu. Rzut Zenka lub gracza na drugim telefonie nie zamyka czytanego menu, zasad ani historii.
 
+W wersji 2.3.2 ekran startowy jest widoczny od pierwszego wyświetlenia HTML. Podczas przygotowywania ilustracji pokazuje komunikat ładowania, a przyciski gry stają się dostępne dopiero po pełnym uruchomieniu. Błąd ilustracji pozwala ponowić wczytanie; błąd inicjalizacji oferuje odświeżenie bez usuwania zapisanej partii. Nie pojawia się już pusty panel „Ostatnie rzuty” z nieaktywnymi przyciskami podczas startu. Po wykonaniu wymiany fokus przechodzi na „Rzuć”, przełączanie dźwięku zachowuje fokus w menu, a powrót z formularzy graczy przywraca go właściwemu przyciskowi trybu.
+
 ## Zapis i zgodność wersji
 
 Stan jest przechowywany lokalnie w przeglądarce, jeśli zezwala ona na localStorage. Oba urządzenia w grze sieciowej przechowują zapis swojej partii; po rozłączeniu można ponownie się sparować.
@@ -114,8 +116,8 @@ Uruchomione z powodzeniem:
 - 31 pierwotnych asercji reguł oraz dodatkowe przypadki walidacji.
 - 576 wyników rzutów sprawdzonych pod kątem zachowania liczby zwierząt i niezmieniania wejściowych obiektów.
 - 6 regresji natychmiastowej wygranej Zenka i przegląd 2624 stanów, w tym 720 stanów z dostępną wygrywającą wymianą.
-- 33 scenariusze integracji stanu gry: gotowość ilustracji, wznowienie, animacje, wygrana, P2P, przerwany rzut, niezależne wyniki, spokojne tempo, odraczanie zmiany rozmiaru sceny i zachowanie otwartego menu podczas ruchu przeciwnika.
-- 14 scenariuszy rzeczywistego HUD-u: preferencje i błędy pamięci, skalowanie, trwałe wyniki, opisy skutków, bezpieczne nazwy graczy, brak powtarzania komunikatów czytnika ekranu oraz zachowanie fokusu przy zmianach tur i otwartych dialogach.
+- 35 scenariuszy integracji stanu gry: widoczny start i odzyskiwanie po błędach ilustracji/atlasu/sceny/HUD-u, wznowienie, animacje, wygrana, P2P, przerwany rzut, niezależne wyniki, spokojne tempo, odraczanie zmiany rozmiaru sceny i zachowanie otwartego menu podczas ruchu przeciwnika.
+- 18 scenariuszy rzeczywistego HUD-u: preferencje i błędy pamięci, skalowanie, trwałe wyniki, opisy skutków, bezpieczne nazwy graczy, brak powtarzania komunikatów czytnika ekranu oraz zachowanie fokusu przy zmianach tur, wymianie, przełączaniu dźwięku, zmianach formularzy i otwartych dialogach.
 - 9 scenariuszy wczytywania ilustracji: opóźnione dekodowanie, współdzielenie obrazu, błędy i ponowienie, walidacja arkusza, cache sprite'ów i zgodność mapowania atlasu.
 - 164 asercje na rzeczywistym module DiceScene, w tym 30 pełnych rzutów, zamknięcie zaokrąglonej siatki, zgodność powierzchni i normalnych z geometrią K13, ograniczenie do fizycznego hull, Canvas 2D, dopasowanie całej drewnianej ramy do ekranu i HUD-u, stabilność wyniku, odraczanie zmian HUD, resize, gesty na przesuniętym lub przewiniętym stole i odświeżanie w tle/bezruchu.
 - 10 kontroli pamięci offline, 7 kontroli wejścia sieciowego i bufora transmisji, 15 scenariuszy cyklu życia połączenia oraz 11 asercji kodowania i odczytu QR.
@@ -124,6 +126,8 @@ Uruchomione z powodzeniem:
 Testy fizyki i stanu uruchamiają rzeczywiste moduły gry; platforma przeglądarki, Canvas/DOM i transport są zastępowane w testach. Symbole i projekcję zaokrąglonych kostek dodatkowo wyrenderowano rzeczywistym Canvas 2D. Nowy zestaw zwierząt sprawdzono również w rozmiarach używanych przez HUD. Dziewięć pełnych programów shaderów, wygenerowanych przez Three.js dla sceny, skompilowano i zlinkowano przez OpenGL ES w EGL/Mesa, również z mapami faktur. Podczas zbierania shaderów kontekst WebGL był zastąpiony; ta kontrola sprawdza zgodność kodu, ale nie stanowi oględzin wyrenderowanej sceny 3D. Przeglądarka kontrolna ma wyłączony WebGL i korzysta z widoku 2D. Bezpośrednia kontrola sceny WebGL na telefonie i rzeczywiste parowanie dwóch urządzeń pozostają do sprawdzenia. Testy nie są dowodem statystycznej uczciwości kostek.
 
 Poprawki dostępności w wersji 2.3.1 sprawdzono testami powyżej i niezależnym przeglądem kodu. Kontrast zmienionych etykiet obliczono dla kolorów z CSS. Testy fokusu modelują zdarzenia DOM; nie zastępują oględzin w przeglądarce ani obsługi czytnikiem ekranu. Środowisko tej weryfikacji nie udostępniało podglądu lokalnej gry w przeglądarce.
+
+Podczas prac nad 2.3.2 sprawdzono także opublikowany układ w przeglądarce przy 320×640, 390×844 i 768×600 CSS px oraz tekście 200%. Diagnostyka nie wykazała poziomego przepełnienia ani obciętych kontrolek w rozgrywce; treść poza ekranem pozostawała dostępna przez przewijanie. Przeglądarka kontrolna korzystała z Canvas 2D. Nowe regresje obejmują rzeczywisty początkowy stan `show`/`hidden`/`inert` w źródłowym HTML; testy startu sprawdzają również zachowanie zapisu partii po błędach. Kontrola na fizycznym iPhonie i odsłuch czytnikiem ekranu pozostają odrębnym etapem weryfikacji.
 
 ## Repozytorium i hosting
 
