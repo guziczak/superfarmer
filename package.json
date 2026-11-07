@@ -1,0 +1,13 @@
+{
+  "name": "superfarmer-3d",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Superfarmer — przy jednym stole. Gra przeglądarkowa z fizycznymi kostkami i WebRTC.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "node dev/serve.mjs",
+    "build": "node build.mjs",
+    "test": "node dev/run-tests.mjs",
+    "check": "node dev/run-tests.mjs && node build.mjs"
+  }
+}

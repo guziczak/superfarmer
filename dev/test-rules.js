@@ -1,4 +1,4 @@
-﻿const R = require('../src/rules.js');
+const R = require('../src/rules.js');
 let fails = 0;
 function eq(name, got, want) {
   const g = JSON.stringify(got), w = JSON.stringify(want);
@@ -89,6 +89,54 @@ h = R.emptyHerd(); h.rabbit = 1; h.sheep = 1; h.pig = 1; h.cow = 1; h.horse = 1;
 eq('wygrana (psy niepotrzebne)', R.checkWin(h), true);
 h.horse = 0;
 eq('bez konia brak wygranej', R.checkWin(h), false);
+
+// Input contracts: untrusted packets must never create fractional animals,
+// invent exchange rates or put a predator on the wrong die.
+const assert = require('node:assert/strict');
+h = { ...R.emptyHerd(), rabbit: 24, sheep: 4 };
+const before = JSON.stringify(h), rate = R.EXCHANGE_RATES[0];
+for (const times of [0, -1, 1.5, NaN, Infinity, -Infinity, '1', null, true, Number.MAX_SAFE_INTEGER + 1]) {
+  assert.equal(R.canExchange(h, S(), rate, 1, times), false);
+  assert.equal(R.applyExchange(h, S(), rate, 1, times), null);
+}
+for (const dir of [0, 2, -2, '1', null, undefined]) {
+  assert.equal(R.canExchange(h, S(), rate, dir, 1), false);
+  assert.equal(R.maxTimes(h, S(), rate, dir), 0);
+}
+for (const badRate of [null, {}, { ...rate, giveN: 0 }, { ...rate, getN: 100 }, { ...rate, id: 'free' }]) {
+  assert.equal(R.applyExchange(h, S(), badRate, 1, 1), null);
+}
+assert.ok(R.applyExchange(h, S(), { ...rate }, 1, 1), 'A faithful rate copy is allowed');
+assert.equal(JSON.stringify(h), before, 'Exchange does not mutate its input');
+for (const faces of [['horse', 'rabbit'], ['rabbit', 'cow'], ['fox', 'wolf'], [null, 'rabbit'], ['rabbit', 'smallDog']]) {
+  assert.equal(R.resolveRoll(h, S(), ...faces), null);
+}
+assert.equal(R.checkWin({}), false);
+assert.equal(R.resolveRoll({ ...h, rabbit: 0.5 }, S(), 'rabbit', 'rabbit'), null);
+assert.equal(R.resolveRoll(h, { ...S(), sheep: -1 }, 'rabbit', 'rabbit'), null);
+console.log('ok   malformed quantities, directions, rates, herds and faces are rejected');
+
+// Conservation and immutable inputs for all 144 die combinations, with an
+// empty farm, occupied farm, exhausted bank and both forms of protection.
+let resolved = 0;
+for (const initial of [
+  R.emptyHerd(),
+  { ...R.emptyHerd(), rabbit: 7, sheep: 3, pig: 2, cow: 1, horse: 1 },
+  { ...R.emptyHerd(), rabbit: 7, sheep: 3, pig: 2, smallDog: 1, bigDog: 1 },
+  { ...R.emptyHerd(), ...R.STOCK_INIT }
+]) {
+  const bank = Object.fromEntries(R.ANIMALS.map(a => [a, R.STOCK_INIT[a] - initial[a]]));
+  const original = JSON.stringify([initial, bank]);
+  for (const a of R.DIE_A) for (const b of R.DIE_B) {
+    const outcome = R.resolveRoll(initial, bank, a, b);
+    assert.ok(outcome);
+    assert.ok(R.validHerd(outcome.herd) && R.validHerd(outcome.stock));
+    for (const animal of R.ANIMALS) assert.equal(outcome.herd[animal] + outcome.stock[animal], R.STOCK_INIT[animal]);
+    assert.equal(JSON.stringify([initial, bank]), original);
+    resolved++;
+  }
+}
+console.log(`ok   ${resolved} roll outcomes conserve every animal and leave inputs unchanged`);
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL OK');
 process.exit(fails ? 1 : 0);

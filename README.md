@@ -1,66 +1,101 @@
-# Superfarmer 3D
+# Superfarmer — przy jednym stole
 
-Klasyczna gra Karola Borsuka („Hodowla zwierzątek", 1943) w przeglądarce — z prawdziwymi
-kostkami 3D. Dwie dwunastościenne kostki z fizyką (three.js + cannon-es), rzucane
-**przeciągnięciem palca** po ekranie; interfejs w całości po polsku.
+Nowa odsłona przeglądarkowego Superfarmera: jasny interfejs w kolorach pergaminu, leśnej zieleni i bursztynu, fizyczne kostki, trzy tryby gry oraz działanie offline.
 
-Całość to w zasadzie **jeden plik `index.html`** (~1,4 MB) — działa z `file://`, z dowolnego
-hostingu statycznego i na telefonie. Obok leżą tylko drobiazgi PWA (`sw.js`,
-`manifest.webmanifest`, `icon.svg`): po pierwszym załadowaniu z HTTPS gra działa **offline**
-— np. na hotspocie z telefonu bez zasięgu (sieciówka nie potrzebuje internetu, tylko
-wspólnej sieci).
+Gra opiera się na Superfarmerze Karola Borsuka („Hodowla zwierzątek”, 1943). Zachowuje założenia zasad klasycznego wydania opisane w pierwotnym projekcie.
 
-## Rozgrywka
+## Szybki start
 
-- **Solo z botem Zenkiem**, **2 graczy na jednym telefonie** (z własnymi imionami) albo
-  **2 graczy na dwóch telefonach** — bezpośrednie połączenie P2P (WebRTC, bez żadnego
-  serwera gry): parujecie się skanując nawzajem kody QR (albo kopiując kod ręcznie),
-  a rzuty są transmitowane na żywo klatka po klatce — fizyka liczy się na telefonie
-  rzucającego, przeciwnik ogląda wierną transmisję. Wymaga wspólnej sieci WiFi albo
-  hotspotu z telefonu; skanowanie kamerą wymaga HTTPS (np. GitHub Pages).
-- Zasady klasycznego wydania (Granna): rozmnażanie parami (stado + kostki), lis kradnie
-  króliki, wilk pożera wszystko oprócz koni i małego psa, psy bronią, jedna wymiana ze
-  Stadem Głównym na turę (w obie strony), limity Stada Głównego.
-- Wygrywa pierwszy komplet: koń, krowa, świnia, owca, królik.
-- **Zaawansowane (opcjonalnie):** suwaki środka ciężkości osobno dla każdej kostki —
-  ciężarek przy ściance wilka/lisa sprawia, że drapieżnik wypada rzadziej (do ~3,6%),
-  przy ściance przeciwnej — częściej (do ~23%); środek = kostki uczciwe (8,3%).
-  Mosiężna kropka na kostce jawnie pokazuje, gdzie siedzi ciężarek.
+1. Sklonuj [repozytorium](https://github.com/guziczak/superfarmer) lub pobierz je przez **Code → Download ZIP** i rozpakuj. Jeśli masz gotową paczkę ZIP z grą, rozpakuj cały jej folder.
+2. Otwórz **`index.html`** w aktualnej przeglądarce.
+3. Wybierz grę z Zenkiem albo dwie osoby przy jednym telefonie.
+
+Nie trzeba instalować pakietów ani budować projektu, aby zagrać. Cała logika, biblioteki, style i grafika gry są w gotowym HTML. Zewnętrzne pliki służą instalacji aplikacji i pamięci offline.
+
+Na telefonie wygodniej otworzyć grę przez serwer lub hosting. Gra na dwóch urządzeniach wymaga wspólnej sieci Wi-Fi/hotspotu; skaner kamery wymaga HTTPS lub localhost. Sam plik `file://` nie zapewnia dostępu do wszystkich funkcji przeglądarki.
+
+## Co jest w tej wersji
+
+- Nowy ekran startowy, własna ilustracja SVG i trzy czytelne karty trybów.
+- Karty stad z licznikiem zebranych gatunków, paskiem postępu i numerem rundy.
+- Odświeżone wymiany, zasady, historia, formularze parowania oraz ekran zwycięstwa.
+- Czytelne oznaczenie aktywnego gracza, opisowe etykiety, obsługa klawiatury, zamykanie dialogów przez Escape i przywracanie fokusu.
+- Układ reagujący na szerokość ekranu, obszary bezpieczne telefonu i preferencję ograniczenia animacji.
+- Brak zewnętrznych fontów i plików graficznych wymaganych do rozgrywki.
+- Działająca gra także bez WebGL: widok zgodności Canvas 2D wykorzystuje **ten sam silnik fizyczny, stany kostek i wynik rzutu**.
+- Renderowanie wstrzymywane w bezruchu; animacje, resize i klatki sieciowe odświeżają scenę na żądanie.
+- Poprawione wznowienie partii, atomowe zapisanie wyniku przed animacją i mocniejszy Zenek.
+- Walidacja danych drugiego telefonu, numerów tur, kursów wymian i stanu zapasów.
+- Pamięć offline ograniczona do plików tej gry i jej ścieżki; manifest oraz ikony aplikacji na urządzenia mobilne.
 
 ## Sterowanie
 
-- **Przeciągnij palcem po stole i puść** — rzut z prędkością gestu (tap = szybki podrzut).
-- **Dwa palce** — każdy palec trzyma i rzuca osobną kostkę.
-- Przycisk **„Rzuć"** robi rzut automatyczny; **„Wymiana"** otwiera kursy wymiany.
-- Gra zapisuje stan po każdej turze (można wznowić po zamknięciu karty).
+- **Przeciągnij po stole i puść** — rzut z prędkością gestu.
+- **Dwa palce** — możliwość trzymania i rzucania kostkami osobno.
+- **Rzuć** — automatyczny rzut; przyciski obsługują standardowo Tab, Enter i Spację.
+- **Wymiana** — jedna wymiana przed rzutem, w dowolnym kierunku i dostępnej liczbie sztuk.
+- **Menu → Zapisz i wróć do menu** — zachowuje bieżącą turę. „Wznów grę” nie przyznaje kolejnej wymiany.
+- **Escape** — zamyka otwarty panel.
+- **Zaawansowane** — ciężarek lub zmiana kształtu kostek. Wyświetlane częstości są orientacyjnymi wartościami wcześniejszej kalibracji; nie są gwarancją dla dowolnego sposobu rzucania.
 
-## Techniczne
+Gdy żadna z ograniczonej liczby fizycznych prób ratunkowych nie ustabilizuje kostki, gra prosi o ponowny rzut bez zmiany stada, statystyk ani prawa do wymiany. Wynik nie jest zatwierdzany wyłącznie z powodu upływu czasu.
 
-- **Kostki**: bryła to matematycznie foremny dwunastościan (weryfikacja:
-  `node dev/check-parallel.mjs` — każda para przeciwległych ścianek idealnie równoległa).
-  Zaokrąglone krawędzie generowane wygładzaniem LogSumExp, symbole zwierząt malowane
-  w shaderze z proceduralnego atlasu (canvas 2D, zero plików graficznych).
-- **Fizyka**: cannon-es, krok 1/120 s; ścianki tacy, wykrywanie spoczynku, przerzut kostki
-  opartej o przeszkodę. Po rzucie kostka **leży tak, jak upadła** — bez żadnych korekt.
-  Kostka, która po wyrzucie znieruchomieje płasko, **zastyga do końca rzutu** (ciało
-  statyczne): nie da się jej ponownie złapać ani potrącić drugą kostką
-  (dowód: `node dev/lock-sim.mjs`).
-- **Dźwięk**: syntezowany WebAudio (stuki zależne od siły uderzenia, fanfary, szczekanie).
-- Grafika zwierząt wspólna dla kostek, HUD-u i konfetti.
+## Zapis i zgodność wersji
+
+Stan jest przechowywany lokalnie w przeglądarce, jeśli zezwala ona na localStorage. Oba urządzenia w grze sieciowej przechowują zapis swojej partii; po rozłączeniu można ponownie się sparować.
+
+Protokół sieciowy tej wersji ma numer **2**. Oba telefony muszą korzystać z tej samej nowej wersji. Stary klient otrzyma prośbę o odświeżenie obu urządzeń. Poprawne wcześniejsze lokalne zapisy są odczytywane z zachowaniem ograniczeń walidacji; stan przyjęty z sieci musi zachowywać całkowitą liczbę zwierząt.
+
+Po pierwszym poprawnym załadowaniu przez HTTPS/localhost i zainstalowaniu service workera zasoby gry są dostępne offline. Dodanie do urządzenia jest oferowane w menu, gdy przeglądarka udostępnia instalację. Do P2P nadal potrzebna jest wspólna sieć lokalna; dostęp do Internetu nie jest warunkiem lokalnego połączenia, jeśli przeglądarki i sieć pozwalają na jego zestawienie. Nie ma serwera gry ani serwera przekazującego ruch TURN. Konfiguracja WebRTC zawiera publiczne serwery STUN.
 
 ## Development
 
-```
-node dev/serve.mjs          # serwer deweloperski na :8123 (także dla telefonu w tej samej sieci)
-node build.mjs              # składa index.html oraz dist/superfarmer.artifact.html
-node dev/test-rules.js      # testy logiki zasad (31 asercji)
-node dev/physrepro.mjs full # headless test fizyki (30 rzutów)
-node dev/settle-sim.mjs     # dowód: 30/30 rzutów kończy się płasko (arg: obciążenie, np. 0.25)
-node dev/lock-sim.mjs       # dowód: zastygnięta kostka jest nieruszalna pod ostrzałem
-node dev/bias-sim.mjs       # kalibracja obciążonych kostek (rozkład ścianek vs offset)
-node dev/qr-test.mjs        # dowód sygnalizacji: SDP → deflate → QR → skan → SDP bez straty
-node dev/check-parallel.mjs # dowód równoległości ścianek k12
+Wymagany **Node.js 22 lub nowszy**. Projekt nie wymaga instalowania zależności npm; używane biblioteki są już w `vendor/`.
+
+```sh
+npm run dev       # serwer na http://localhost:8123
+npm run build     # odświeżenie plików wynikowych
+npm test          # wszystkie testy
+npm run check     # testy i budowanie
 ```
 
-Źródła w `src/` (rules, symbols, dice3d, hud, ai, audio, main + style/markup),
-biblioteki w `vendor/`, strony pomocnicze w `dev/`. Adres `?debug=1` włącza logi przepływu tur.
+Można również wywoływać bezpośrednio `node build.mjs` oraz skrypty w `dev/`. Parametr `?debug=1` włącza diagnostykę przepływu tur.
+
+### Układ projektu
+
+| Ścieżka | Zawartość |
+| --- | --- |
+| `index.html` | Gotowa, samodzielna gra |
+| `dist/superfarmer.artifact.html` | Wariant do osadzenia w środowisku artefaktów |
+| `src/markup.html`, `src/style.css` | Interfejs i oprawa |
+| `src/rules.js`, `src/ai.js` | Reguły i decyzje Zenka |
+| `src/main.js` | Tury, zapis, wznowienie i protokół rozgrywki |
+| `src/dice3d.js` | Wspólna fizyka, renderer WebGL i renderer Canvas 2D |
+| `src/net.js` | Parowanie QR, WebRTC i cykl życia połączenia |
+| `src/hud.js`, `src/symbols.js`, `src/audio.js` | Prezentacja, proceduralne zwierzęta i dźwięk |
+| `src/sw.js`, `src/icon.svg` | Źródła service workera i ikony |
+| `icons/` | Gotowe ikony PNG 192, 512 i Apple Touch |
+| `vendor/` | Biblioteki dołączane do HTML |
+| `dev/` | Serwer i testy |
+
+Edytuj pliki w `src/`, a potem uruchom build. Pliki wynikowe w katalogu głównym i wariant artefaktowy są generowane automatycznie. Ikony PNG są przygotowanymi rastrami `src/icon.svg`; przy zmianie projektu ikony należy zaktualizować je razem.
+
+## Weryfikacja tej wersji
+
+Uruchomione z powodzeniem:
+
+- 31 pierwotnych asercji reguł oraz dodatkowe przypadki walidacji.
+- 576 wyników rzutów sprawdzonych pod kątem zachowania liczby zwierząt i niezmieniania wejściowych obiektów.
+- 6 regresji natychmiastowej wygranej Zenka i przegląd 2624 stanów, w tym 720 stanów z dostępną wygrywającą wymianą.
+- 17 scenariuszy integracji stanu gry: wznowienie, animacje, wygrana, menu, wiadomości P2P i przerwany rzut.
+- 114 asercji na rzeczywistym module DiceScene, w tym 30 pełnych rzutów, Canvas 2D, stabilność wyniku, resize i odświeżanie w tle/bezruchu.
+- 10 kontroli pamięci offline, 7 kontroli wejścia sieciowego i bufora transmisji, 15 scenariuszy cyklu życia połączenia oraz 11 asercji kodowania i odczytu QR.
+- Dotychczasowe testy geometrii, osiadania i blokowania kostek.
+
+Testy fizyki i stanu uruchamiają rzeczywiste moduły gry; platforma przeglądarki, Canvas/DOM i transport są zastępowane w testach. Usługa podglądu przeglądarkowego w środowisku przygotowania tej wersji była niedostępna. Nie wykonano więc końcowej wizualnej weryfikacji w przeglądarce ani rzeczywistego parowania dwóch urządzeń. Testy nie są dowodem statystycznej uczciwości kostek.
+
+## Repozytorium i hosting
+
+Ta wersja powstała na bazie commitu `056c1c7d5dc687fa0741dcea9d49be9fa7278c06` repozytorium `guziczak/superfarmer`. Repozytorium zawiera źródła, gotowy HTML i zasoby PWA.
+
+Publikację gry na hostingu konfiguruje się osobno. Na hosting statyczny prześlij `index.html`, `sw.js`, `manifest.webmanifest`, `icon.svg` oraz cały katalog `icons/`, zachowując ich układ.

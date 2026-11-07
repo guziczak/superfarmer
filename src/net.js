@@ -11,9 +11,24 @@ var NET = (function () {
   var CFG = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] };
   var pc = null, dc = null, ui = null, cb = {}, closed = true, openTimer = 0, graceTimer = 0;
   var scan = null;
+  var scanGeneration = 0;
+  var peerGeneration = 0;
+  var cancelCameraWait = null, cancelIceWait = null;
+  var acceptingCode = false;
+  var MAX_CODE = 16000, MAX_SDP = 32768, MAX_MESSAGE = 65536;
 
   function available() {
     return typeof RTCPeerConnection === 'function' && typeof TextEncoder === 'function';
+  }
+
+  // Samo `closed` nie wystarcza: po anulowaniu może już trwać nowe parowanie.
+  function currentPeer(target, generation) {
+    return !closed && pc === target && peerGeneration === generation;
+  }
+
+  function cancelWaits() {
+    if (cancelCameraWait) cancelCameraWait();
+    if (cancelIceWait) cancelIceWait();
   }
 
   /* ---------- pakowanie SDP do kodu QR ----------
@@ -48,30 +63,51 @@ var NET = (function () {
      zanim WebRTC wypluje kryptyczny błąd. */
   function packSdp(sdp, kind) {
     var bytes = new TextEncoder().encode(slimSdp(sdp));
-    var tag = (typeof CompressionStream === 'function' ? 'S1' : 'S0') + (kind || '') + '.';
+    var tag = 'S0' + (kind || '') + '.';
     if (typeof CompressionStream !== 'function') {
       return Promise.resolve(tag + b64url(bytes));
     }
-    var cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
-    return new Response(cs).arrayBuffer().then(function (buf) {
-      return tag + b64url(new Uint8Array(buf));
-    });
+    try {
+      var cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+      return new Response(cs).arrayBuffer().then(function (buf) {
+        return 'S1' + (kind || '') + '.' + b64url(new Uint8Array(buf));
+      }).catch(function () { return tag + b64url(bytes); });
+    } catch (err) { return Promise.resolve(tag + b64url(bytes)); }
   }
 
   function unpackSdp(code) {
+    if (typeof code !== 'string' || code.length > MAX_CODE) return Promise.reject(new Error('Kod jest zbyt długi lub nieprawidłowy'));
     var m = String(code).trim().match(/^(S[01])([OA])?\.([A-Za-z0-9_-]+)$/);
     if (!m) return Promise.reject(new Error('To nie jest kod Superfarmera'));
     var kind = m[2] || null;
-    var bytes = unb64url(m[3]);
+    var bytes;
+    try { bytes = unb64url(m[3]); } catch (err) { return Promise.reject(new Error('Kod jest uszkodzony — skopiuj go ponownie')); }
     var p;
     if (m[1] === 'S1') {
       if (typeof DecompressionStream !== 'function') return Promise.reject(new Error('Przeglądarka nie obsługuje tego kodu'));
-      var ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-      p = new Response(ds).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
+      try {
+        var reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+        var chunks = [], total = 0;
+        var readNext = function () {
+          return reader.read().then(function (part) {
+            if (part.done) {
+              var raw = new Uint8Array(total), at = 0;
+              chunks.forEach(function (chunk) { raw.set(chunk, at); at += chunk.length; });
+              return raw;
+            }
+            total += part.value.length;
+            if (total > MAX_SDP) { reader.cancel().catch(function () {}); throw new Error('Kod zawiera zbyt dużo danych'); }
+            chunks.push(part.value);
+            return readNext();
+          });
+        };
+        p = readNext();
+      } catch (err) { return Promise.reject(new Error('Przeglądarka nie obsługuje tego kodu')); }
     } else {
       p = Promise.resolve(bytes);
     }
     return p.then(function (raw) {
+      if (raw.length > MAX_SDP) throw new Error('Kod zawiera zbyt dużo danych');
       return { sdp: new TextDecoder().decode(raw).split('\n').join('\r\n') + '\r\n', kind: kind };
     });
   }
@@ -100,6 +136,8 @@ var NET = (function () {
 
   function startScan(video, onCode, onFail) {
     stopScan();
+    var generation = scanGeneration;
+    var target = pc, peer = peerGeneration;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       onFail('Brak dostępu do kamery (potrzebne HTTPS)');
       return Promise.resolve(false);
@@ -108,6 +146,10 @@ var NET = (function () {
       video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false
     }).then(function (stream) {
+      if (generation !== scanGeneration || !currentPeer(target, peer)) {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+        return false;
+      }
       video.srcObject = stream;
       video.muted = true;
       video.setAttribute('playsinline', '');
@@ -126,7 +168,9 @@ var NET = (function () {
       var hi = false;
       scan = {
         stream: stream,
+        video: video,
         timer: setInterval(function () {
+          if (generation !== scanGeneration || !currentPeer(target, peer)) return;
           if (!video.videoWidth) return;
           // na przemian: szybki skan 640px i pełna rozdzielczość — QR trzymany
           // daleko od kamery (laptop ze stałą ostrością!) potrzebuje dużo pikseli
@@ -149,6 +193,7 @@ var NET = (function () {
       };
       return true;
     }).catch(function (err) {
+      if (generation !== scanGeneration || !currentPeer(target, peer)) return false;
       onFail(err && err.name === 'NotAllowedError'
         ? 'Nie zezwolono na kamerę — wpisz kod ręcznie'
         : 'Kamera niedostępna — wpisz kod ręcznie');
@@ -159,50 +204,83 @@ var NET = (function () {
   /** Kamera PRZED ofertą: zgoda na nią odblokowuje w przeglądarce prawdziwe adresy
       lokalne w kandydatach ICE (zamiast pseudonimów mDNS) — łączenie jest pewniejsze.
       Nie czekamy w nieskończoność na dialog zgody. */
-  function camFirst(video, onCode, onFail) {
-    return Promise.race([
-      startScan(video, onCode, onFail),
-      new Promise(function (r) { setTimeout(function () { r('pending'); }, 6500); })
-    ]);
+  function camFirst(video, onCode, onFail, target, generation) {
+    return new Promise(function (resolve) {
+      var settled = false;
+      var finish = function (result) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (cancelCameraWait === cancel) cancelCameraWait = null;
+        resolve(result);
+      };
+      var cancel = function () { finish(false); };
+      var timer = setTimeout(function () { finish(currentPeer(target, generation) ? 'pending' : false); }, 6500);
+      cancelCameraWait = cancel;
+      startScan(video, onCode, onFail).then(function (result) {
+        finish(currentPeer(target, generation) ? result : false);
+      }, function () { finish(false); });
+    });
   }
 
   function stopScan() {
+    scanGeneration++;
     if (!scan) return;
     clearInterval(scan.timer);
     try { scan.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+    try { scan.video.srcObject = null; } catch (e) {}
     scan = null;
   }
 
   /* ---------- połączenie ---------- */
-  function gathered() {
-    if (pc.iceGatheringState === 'complete') return Promise.resolve();
+  function gathered(target, generation) {
+    if (!currentPeer(target, generation) || target.iceGatheringState === 'complete') return Promise.resolve();
     return new Promise(function (res) {
-      var t = setTimeout(res, 5500); // mDNS/STUN: nie czekamy w nieskończoność
-      pc.addEventListener('icegatheringstatechange', function g() {
-        if (pc && pc.iceGatheringState === 'complete') { clearTimeout(t); res(); }
-      });
+      var settled = false;
+      var finish = function () {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        target.removeEventListener('icegatheringstatechange', changed);
+        if (cancelIceWait === finish) cancelIceWait = null;
+        res();
+      };
+      var changed = function () {
+        if (!currentPeer(target, generation) || target.iceGatheringState === 'complete') finish();
+      };
+      var timer = setTimeout(finish, 5500); // mDNS/STUN: nie czekamy w nieskończoność
+      cancelIceWait = finish;
+      target.addEventListener('icegatheringstatechange', changed);
+      changed();
     });
   }
 
-  function wireChannel(ch) {
+  function wireChannel(ch, target, generation) {
+    if (!currentPeer(target, generation)) {
+      try { ch.close(); } catch (e) {}
+      return;
+    }
     dc = ch;
-    dc.onopen = function () {
+    var isCurrent = function () { return currentPeer(target, generation) && dc === ch; };
+    ch.onopen = function () {
+      if (!isCurrent()) return;
       clearTimeout(openTimer);
       if (cb.onOpen) cb.onOpen();
     };
-    dc.onclose = function () { fail(); };
-    dc.onerror = function () { fail(); };
-    dc.onmessage = function (e) {
+    ch.onclose = function () { if (isCurrent()) fail(target, generation); };
+    ch.onerror = function () { if (isCurrent()) fail(target, generation); };
+    ch.onmessage = function (e) {
+      if (!isCurrent() || typeof e.data !== 'string' || e.data.length > MAX_MESSAGE) return;
       var m = null;
       try { m = JSON.parse(e.data); } catch (err) { return; }
-      if (m && m.t && cb.onMsg) cb.onMsg(m);
+      if (m && typeof m === 'object' && !Array.isArray(m) && typeof m.t === 'string' && cb.onMsg) cb.onMsg(m);
     };
   }
 
-  function watchConnection() {
-    pc.onconnectionstatechange = function () {
-      if (!pc) return;
-      var st = pc.connectionState;
+  function watchConnection(target, generation) {
+    target.onconnectionstatechange = function () {
+      if (!currentPeer(target, generation)) return;
+      var st = target.connectionState;
       if (st === 'connected') {
         clearTimeout(graceTimer);
         graceTimer = 0;
@@ -210,142 +288,195 @@ var NET = (function () {
       } else if (st === 'disconnected') {
         // chwilowy zanik (np. mrugnięcie WiFi) często sam wraca — dajemy 10 s łaski
         if (cb.onLink) cb.onLink(false);
+        if (!currentPeer(target, generation)) return;
         clearTimeout(graceTimer);
         graceTimer = setTimeout(function () {
-          if (pc && pc.connectionState !== 'connected') fail();
+          if (currentPeer(target, generation) && target.connectionState !== 'connected') fail(target, generation);
         }, 10000);
       } else if (st === 'failed' || st === 'closed') {
-        fail();
+        fail(target, generation);
       }
     };
   }
 
-  function fail() {
-    if (closed) return;
+  function fail(target, generation) {
+    if (!currentPeer(target, generation)) return;
     closed = true;
     stopScan();
     clearTimeout(openTimer);
     clearTimeout(graceTimer);
+    cancelWaits();
     if (cb.onClose) cb.onClose();
   }
 
   /* Licznik czasu TYLKO na automatyczną fazę łączenia (po wymianie kodów).
      Na czekanie, aż drugi gracz przepisze/prześle kod, limitu NIE MA —
      wymiana przez komunikator potrafi trwać minuty; od tego jest „anuluj”. */
-  function armOpenTimeout(ms) {
+  function armOpenTimeout(target, generation, ms) {
+    if (!currentPeer(target, generation)) return;
     clearTimeout(openTimer);
     openTimer = setTimeout(function () {
+      if (!currentPeer(target, generation)) return;
       if (dc && dc.readyState === 'open') return;
       if (ui) ui.status('Nie udało się połączyć — spróbujcie jeszcze raz (najpewniej: hotspot z telefonu)');
-      fail();
+      fail(target, generation);
     }, ms || 60000);
   }
 
   /** Start jako założyciel: tworzy ofertę → pokazuje kod → skanuje/przyjmuje odpowiedź. */
   function startHost(uiEls, callbacks) {
+    close();
+    var target = new RTCPeerConnection(CFG), generation = peerGeneration;
     ui = uiEls; cb = callbacks; closed = false;
-    pc = new RTCPeerConnection(CFG);
-    watchConnection();
-    wireChannel(pc.createDataChannel('sf', { ordered: true }));
-    ui.status('Uruchamiam kamerę…');
-    camFirst(ui.video, acceptPeerCode, function (msg) { ui.cameraFailed(msg); })
+    pc = target;
+    watchConnection(target, generation);
+    wireChannel(target.createDataChannel('sf', { ordered: true }), target, generation);
+    uiEls.status('Uruchamiam kamerę…');
+    return camFirst(uiEls.video, function (code) {
+      if (currentPeer(target, generation)) acceptPeerCode(code);
+    }, function (msg) {
+      if (currentPeer(target, generation)) uiEls.cameraFailed(msg);
+    }, target, generation)
       .then(function () {
-        if (closed) return;
-        ui.status('Tworzę kod gry…');
-        return pc.createOffer()
-          .then(function (o) { return pc.setLocalDescription(o); })
-          .then(gathered)
-          .then(function () { return packSdp(pc.localDescription.sdp, 'O'); })
+        if (!currentPeer(target, generation)) return;
+        uiEls.status('Tworzę kod gry…');
+        return target.createOffer()
+          .then(function (o) {
+            if (currentPeer(target, generation)) return target.setLocalDescription(o);
+          })
+          .then(function () { return gathered(target, generation); })
+          .then(function () {
+            if (currentPeer(target, generation)) return packSdp(target.localDescription.sdp, 'O');
+          })
           .then(function (code) {
-            if (closed) return;
-            ui.showMyCode(code);
-            ui.status('Gracz 2 skanuje ten kod (u siebie: „Dołącz”), a Ty zeskanuj jego odpowiedź poniżej');
+            if (!currentPeer(target, generation)) return;
+            uiEls.showMyCode(code);
+            uiEls.status('Gracz 2 skanuje ten kod (u siebie: „Dołącz”), a Ty zeskanuj jego odpowiedź poniżej');
           });
       })
-      .catch(function (e) { ui.status('Błąd: ' + (e && e.message || e)); fail(); });
+      .catch(function (e) {
+        if (!currentPeer(target, generation)) return;
+        uiEls.status('Błąd: ' + (e && e.message || e));
+        fail(target, generation);
+      });
   }
 
   /** Start jako dołączający: skanuje kod founderа → odsyła własny kod-odpowiedź. */
   function startGuest(uiEls, callbacks) {
+    close();
+    var target = new RTCPeerConnection(CFG), generation = peerGeneration;
     ui = uiEls; cb = callbacks; closed = false;
-    pc = new RTCPeerConnection(CFG);
-    watchConnection();
-    pc.ondatachannel = function (e) { wireChannel(e.channel); };
-    ui.status('Zeskanuj kod z telefonu założyciela');
-    startScan(ui.video, acceptPeerCode, function (msg) { ui.cameraFailed(msg); });
+    pc = target;
+    watchConnection(target, generation);
+    target.ondatachannel = function (e) { wireChannel(e.channel, target, generation); };
+    uiEls.status('Zeskanuj kod z telefonu założyciela');
+    return startScan(uiEls.video, function (code) {
+      if (currentPeer(target, generation)) acceptPeerCode(code);
+    }, function (msg) {
+      if (currentPeer(target, generation)) uiEls.cameraFailed(msg);
+    });
   }
 
   var lastRejected = '', lastRejectedAt = 0;
 
-  function rescan() {
-    if (!ui || closed) return;
-    startScan(ui.video, acceptPeerCode, function (msg) { ui.cameraFailed(msg); });
+  function rescan(target, generation) {
+    if (!currentPeer(target, generation)) return;
+    var view = ui;
+    startScan(view.video, function (code) {
+      if (currentPeer(target, generation)) acceptPeerCode(code);
+    }, function (msg) {
+      if (currentPeer(target, generation)) view.cameraFailed(msg);
+    });
   }
 
-  function rejectCode(code, msg) {
+  function rejectCode(code, msg, target, generation) {
+    if (!currentPeer(target, generation)) return;
     lastRejected = code;
     lastRejectedAt = Date.now();
     if (ui) ui.status(msg);
-    rescan();
+    rescan(target, generation);
   }
 
   /** Przyjmij kod od drugiej strony (ze skanera albo wklejony ręcznie). */
   function acceptPeerCode(code) {
-    if (!pc || closed) return;
+    if (!pc || closed || acceptingCode || isOpen()) return;
+    acceptingCode = true;
+    var target = pc, generation = peerGeneration, view = ui;
     code = String(code).trim();
-    unpackSdp(code).then(function (res) {
-      var isHost = !!(pc.localDescription && pc.localDescription.type === 'offer');
+    return unpackSdp(code).then(function (res) {
+      if (!currentPeer(target, generation)) return;
+      var isHost = !!(target.localDescription && target.localDescription.type === 'offer');
       if (isHost && res.kind === 'O') {
-        rejectCode(code, 'To kod ZAŁOŻYCIELA gry (może Twój własny?). Drugi gracz nie zakłada swojej — on tapa „Dołącz”, skanuje kod z TWOJEGO ekranu, a Ty potem jego odpowiedź.');
+        rejectCode(code, 'To kod ZAŁOŻYCIELA gry (może Twój własny?). Drugi gracz nie zakłada swojej — on tapa „Dołącz”, skanuje kod z TWOJEGO ekranu, a Ty potem jego odpowiedź.', target, generation);
         return;
       }
       if (!isHost && res.kind === 'A') {
-        rejectCode(code, 'To kod-ODPOWIEDŹ. Jako dołączający zeskanuj pierwszy kod — ten z ekranu założyciela.');
+        rejectCode(code, 'To kod-ODPOWIEDŹ. Jako dołączający zeskanuj pierwszy kod — ten z ekranu założyciela.', target, generation);
         return;
       }
       if (isHost) {
         // odpowiedź — od teraz łączenie jest automatyczne
-        ui.status('Łączę…');
-        armOpenTimeout(60000);
-        return pc.setRemoteDescription({ type: 'answer', sdp: res.sdp }).catch(function (e) {
+        view.status('Łączę…');
+        armOpenTimeout(target, generation, 60000);
+        return target.setRemoteDescription({ type: 'answer', sdp: res.sdp }).catch(function (e) {
+          if (!currentPeer(target, generation)) return;
           clearTimeout(openTimer);
-          rejectCode(code, 'Nie udało się przyjąć odpowiedzi — zeskanuj ją jeszcze raz. (' + e.message + ')');
+          rejectCode(code, 'Nie udało się przyjąć odpowiedzi — zeskanuj ją jeszcze raz. (' + e.message + ')', target, generation);
         });
       }
       // jesteśmy gościem: oferta → tworzymy odpowiedź
-      ui.status('Odpowiadam…');
-      return pc.setRemoteDescription({ type: 'offer', sdp: res.sdp })
-        .then(function () { return pc.createAnswer(); })
-        .then(function (a) { return pc.setLocalDescription(a); })
-        .then(gathered)
-        .then(function () { return packSdp(pc.localDescription.sdp, 'A'); })
+      view.status('Odpowiadam…');
+      return target.setRemoteDescription({ type: 'offer', sdp: res.sdp })
+        .then(function () {
+          if (currentPeer(target, generation)) return target.createAnswer();
+        })
+        .then(function (a) {
+          if (currentPeer(target, generation)) return target.setLocalDescription(a);
+        })
+        .then(function () { return gathered(target, generation); })
+        .then(function () {
+          if (currentPeer(target, generation)) return packSdp(target.localDescription.sdp, 'A');
+        })
         .then(function (myCode) {
-          if (closed) return;
+          if (!currentPeer(target, generation)) return;
           stopScan();
-          ui.showMyCode(myCode);
-          ui.status('Pokaż ten kod założycielowi (albo mu go wyślij) — po jego przyjęciu gra ruszy sama');
+          view.showMyCode(myCode);
+          view.status('Pokaż ten kod założycielowi (albo mu go wyślij) — po jego przyjęciu gra ruszy sama');
         })
         .catch(function (e) {
-          rejectCode(code, 'Nie udało się przyjąć kodu — zeskanuj jeszcze raz. (' + e.message + ')');
+          if (!currentPeer(target, generation)) return;
+          rejectCode(code, 'Nie udało się przyjąć kodu — zeskanuj jeszcze raz. (' + e.message + ')', target, generation);
         });
     }).catch(function (e) {
-      rejectCode(code, 'Zły kod: ' + e.message);
-    });
+      if (!currentPeer(target, generation)) return;
+      rejectCode(code, 'Zły kod: ' + e.message, target, generation);
+    }).finally(function () { if (currentPeer(target, generation)) acceptingCode = false; });
   }
 
   function send(m) {
     if (dc && dc.readyState === 'open') {
+      // Pomiń wyłącznie przestarzałą klatkę animacji, nigdy ruch ani wynik.
+      if (m && m.t === 'f' && dc.bufferedAmount > 262144) return;
       try { dc.send(JSON.stringify(m)); } catch (e) {}
     }
   }
 
   function close() {
     closed = true;
+    peerGeneration++;
+    acceptingCode = false;
     stopScan();
     clearTimeout(openTimer);
     clearTimeout(graceTimer);
-    try { if (dc) { dc.onclose = null; dc.close(); } } catch (e) {}
-    try { if (pc) { pc.onconnectionstatechange = null; pc.close(); } } catch (e) {}
+    openTimer = graceTimer = 0;
+    cancelWaits();
+    try {
+      if (dc) { dc.onopen = dc.onclose = dc.onerror = dc.onmessage = null; dc.close(); }
+    } catch (e) {}
+    try {
+      if (pc) { pc.onconnectionstatechange = pc.ondatachannel = null; pc.close(); }
+    } catch (e) {}
+    lastRejected = ''; lastRejectedAt = 0;
     dc = null; pc = null; ui = null; cb = {};
   }
 

@@ -35,8 +35,29 @@ var RULES = (function () {
 
   function clone(o) {
     var c = {};
-    for (var k in o) c[k] = o[k];
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) c[k] = o[k];
     return c;
+  }
+
+  /** Publiczne funkcje przyjmują tylko pełny, nieujemny stan liczników. */
+  function validHerd(h) {
+    return !!h && typeof h === 'object' && !Array.isArray(h) && ANIMALS.every(function (a) {
+      return Object.prototype.hasOwnProperty.call(h, a) && Number.isSafeInteger(h[a]) && h[a] >= 0 && h[a] <= STOCK_INIT[a];
+    });
+  }
+
+  function validFaces(faceA, faceB) {
+    return DIE_A.indexOf(faceA) !== -1 && DIE_B.indexOf(faceB) !== -1;
+  }
+
+  function canonicalRate(rate) {
+    if (!rate || typeof rate !== 'object') return null;
+    for (var i = 0; i < EXCHANGE_RATES.length; i++) {
+      var r = EXCHANGE_RATES[i];
+      if (rate.id === r.id && rate.give === r.give && rate.get === r.get &&
+          rate.giveN === r.giveN && rate.getN === r.getN) return r;
+    }
+    return null;
   }
 
   /**
@@ -47,6 +68,7 @@ var RULES = (function () {
    * Zwraca { herd, stock, events } — kopie, bez mutacji wejścia.
    */
   function resolveRoll(herdIn, stockIn, faceA, faceB) {
+    if (!validHerd(herdIn) || !validHerd(stockIn) || !validFaces(faceA, faceB)) return null;
     var herd = clone(herdIn);
     var stock = clone(stockIn);
     var events = [];
@@ -116,8 +138,10 @@ var RULES = (function () {
 
   /** dir: +1 = give→get (w górę), -1 = get→give (w dół). */
   function canExchange(herd, stock, rate, dir, times) {
-    times = times || 1;
-    if (times < 1) return false;
+    if (times === undefined) times = 1;
+    rate = canonicalRate(rate);
+    if (!rate || !validHerd(herd) || !validHerd(stock) ||
+        (dir !== 1 && dir !== -1) || !Number.isSafeInteger(times) || times < 1) return false;
     if (dir > 0) {
       return herd[rate.give] >= rate.giveN * times && stock[rate.get] >= rate.getN * times;
     }
@@ -125,6 +149,8 @@ var RULES = (function () {
   }
 
   function maxTimes(herd, stock, rate, dir) {
+    rate = canonicalRate(rate);
+    if (!rate || !validHerd(herd) || !validHerd(stock) || (dir !== 1 && dir !== -1)) return 0;
     if (dir > 0) {
       return Math.min(Math.floor(herd[rate.give] / rate.giveN), Math.floor(stock[rate.get] / rate.getN));
     }
@@ -132,10 +158,11 @@ var RULES = (function () {
   }
 
   function applyExchange(herdIn, stockIn, rate, dir, times) {
-    times = times || 1;
+    if (times === undefined) times = 1;
+    rate = canonicalRate(rate);
+    if (!canExchange(herdIn, stockIn, rate, dir, times)) return null;
     var herd = clone(herdIn);
     var stock = clone(stockIn);
-    if (!canExchange(herd, stock, rate, dir, times)) return null;
     if (dir > 0) {
       herd[rate.give] -= rate.giveN * times; stock[rate.give] += rate.giveN * times;
       herd[rate.get] += rate.getN * times; stock[rate.get] -= rate.getN * times;
@@ -148,6 +175,7 @@ var RULES = (function () {
 
   /** Zwycięstwo: co najmniej po jednym z 5 zwierząt (psy niewymagane). */
   function checkWin(herd) {
+    if (!validHerd(herd)) return false;
     for (var i = 0; i < WIN_ANIMALS.length; i++) {
       if (herd[WIN_ANIMALS[i]] < 1) return false;
     }
@@ -171,6 +199,8 @@ var RULES = (function () {
     EXCHANGE_RATES: EXCHANGE_RATES,
     VALUE: VALUE,
     emptyHerd: emptyHerd,
+    validHerd: validHerd,
+    validFaces: validFaces,
     resolveRoll: resolveRoll,
     canExchange: canExchange,
     maxTimes: maxTimes,

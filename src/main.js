@@ -10,6 +10,10 @@
   var LS_NAMES = 'sf3d.names';
   var LS_NETNAME = 'sf3d.netname';
   var LS_NETSAVE = 'sf3d.netsave.v1';
+  var PROTOCOL_VERSION = 2;
+  var MAX_NAME = 32;
+  var NET_SESSION = 0;
+  var MAX_NET_QUEUE = 8;
 
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -39,12 +43,14 @@
 
   /* ---------- stan ---------- */
   function newState(mode, names, bias) {
-    names = names || [];
+    names = Array.isArray(names) ? names : [];
+    names = [cleanName(names[0], 'Gracz 1'), cleanName(names[1], 'Gracz 2')];
     var players = mode === 'solo'
       ? [{ name: 'Ty', isBot: false }, { name: 'Zenek 🤖', isBot: true }]
       : [{ name: names[0] || 'Gracz 1', isBot: false }, { name: names[1] || 'Gracz 2', isBot: false }];
     players.forEach(function (p) { p.herd = RULES.emptyHerd(); });
     return {
+      v: 2,
       mode: mode,
       bias: normTuning(bias),
       players: players,
@@ -57,20 +63,87 @@
     };
   }
 
+  function validName(n) {
+    return typeof n === 'string' && n.trim().length > 0 && n.length <= MAX_NAME && !/[\u0000-\u001f\u007f]/.test(n);
+  }
+
+  function cleanName(n, fallback) {
+    if (typeof n !== 'string') return fallback;
+    return n.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, MAX_NAME) || fallback;
+  }
+
+  function validTuning(b) {
+    var v = Array.isArray(b) ? b : b && (b.m === 'w' || b.m === 's') ? b.v : null;
+    return Array.isArray(v) && v.length === 2 && v.every(function (x) {
+      return typeof x === 'number' && Number.isFinite(x) && x >= -1 && x <= 1;
+    });
+  }
+
+  function validFacePair(faces) {
+    return Array.isArray(faces) && faces.length === 2 && RULES.validFaces(faces[0], faces[1]);
+  }
+
+  // Zapis i wznowienie P2P mają tę samą granicę zaufania: buduj pełny, nowy
+  // obiekt wyłącznie z dozwolonych pól. Żaden stan nie omija walidacji zapasów.
+  function readState(raw, expectedMode) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw.v !== undefined && raw.v !== 2) ||
+        ['solo', 'duo', 'net'].indexOf(raw.mode) < 0 || (expectedMode && raw.mode !== expectedMode) ||
+        !Array.isArray(raw.players) || raw.players.length !== 2 ||
+        (raw.cur !== 0 && raw.cur !== 1) || !Number.isSafeInteger(raw.turnCount) || raw.turnCount < 1 || raw.turnCount > 1000000 ||
+        typeof raw.exchangeUsed !== 'boolean' || ['preroll', 'rolling', 'resolving', 'gameover'].indexOf(raw.phase) < 0 ||
+        !RULES.validHerd(raw.stock) || (raw.bias !== undefined && !validTuning(raw.bias))) return null;
+    var players = [];
+    for (var i = 0; i < 2; i++) {
+      var p = raw.players[i];
+      if (!p || !validName(p.name) || !RULES.validHerd(p.herd) || p.isBot !== (raw.mode === 'solo' && i === 1)) return null;
+      var herd = {};
+      RULES.ANIMALS.forEach(function (a) { herd[a] = p.herd[a]; });
+      players.push({ name: p.name, isBot: p.isBot, herd: herd });
+    }
+    var stock = {};
+    for (var ai = 0; ai < RULES.ANIMALS.length; ai++) {
+      var animal = RULES.ANIMALS[ai];
+      if (raw.stock[animal] + players[0].herd[animal] + players[1].herd[animal] !== RULES.STOCK_INIT[animal]) return null;
+      stock[animal] = raw.stock[animal];
+    }
+    var stats = {};
+    var statNames = ['rolls', 'wolfEaten', 'foxStolen', 'dogSaves'];
+    if (!raw.stats || typeof raw.stats !== 'object') return null;
+    for (var si = 0; si < statNames.length; si++) {
+      var key = statNames[si], counts = raw.stats[key];
+      if (!Array.isArray(counts) || counts.length !== 2 || !counts.every(function (n) {
+        return Number.isSafeInteger(n) && n >= 0 && n <= 1000000000;
+      })) return null;
+      stats[key] = counts.slice();
+    }
+    var out = {
+      v: 2, mode: raw.mode, bias: normTuning(raw.bias), players: players, stock: stock,
+      cur: raw.cur, turnCount: raw.turnCount, exchangeUsed: raw.exchangeUsed, phase: raw.phase, stats: stats
+    };
+    if (raw.phase === 'resolving') {
+      var rr = raw.resolvedRoll;
+      if (!rr || rr.player !== raw.cur || rr.turn !== raw.turnCount || !validFacePair(rr.faces) || stats.rolls[raw.cur] < 1) return null;
+      out.resolvedRoll = { player: rr.player, turn: rr.turn, faces: rr.faces.slice() };
+    }
+    var winners = players.filter(function (p) { return RULES.checkWin(p.herd); });
+    if (winners.length > 1 || (raw.phase === 'gameover' && winners.length !== 1)) return null;
+    return out;
+  }
+
   function save() {
     if (!S || S.phase === 'gameover' || S.mode === 'net') return;
-    var c = JSON.parse(JSON.stringify(S));
-    c.phase = 'preroll';
-    lsSet(LS_SAVE, JSON.stringify(c));
+    // Jeden atomowy zapis obejmuje fazę, zużytą wymianę, wynik i statystyki.
+    lsSet(LS_SAVE, JSON.stringify(S));
   }
+
+  function persist() { save(); netSave(); }
 
   function loadSave() {
     var raw = lsGet(LS_SAVE);
     if (!raw) return null;
     try {
-      var s = JSON.parse(raw);
-      if (!s.players || s.players.length !== 2) return null;
-      return s;
+      var s = readState(JSON.parse(raw));
+      return s && s.mode !== 'net' ? s : null;
     } catch (e) { return null; }
   }
 
@@ -97,29 +170,40 @@
     if (netStream) return;
     netStream = setInterval(function () {
       if (!isNetLocalTurn() || !dice.isBusy()) return;
-      NET.send({ t: 'f', d: dice.getNetFrame() });
+      sendTurnMessage({ t: 'f', d: dice.getNetFrame() });
     }, 40);
   }
 
   function flushNetQ() {
-    while (netQ.length) handleNetMsg(netQ.shift());
+    var pending = netQ;
+    netQ = [];
+    pending.forEach(onNetMsg);
   }
+
+  function sendTurnMessage(m) {
+    if (!isNet()) return;
+    m.turn = S.turnCount;
+    m.player = S.cur;
+    NET.send(m);
+  }
+
+  function matchesTurn(m, player, turn) { return m.player === player && m.turn === turn; }
 
   /* Zapis przerwanej gry sieciowej: po każdej turze, na OBU urządzeniach.
      Zerwanie łącza go zostawia (można wznowić po ponownym sparowaniu),
      celowe wyjście do menu i koniec gry — czyszczą. */
   function netSave() {
     if (!isNet() || S.phase === 'gameover') return;
-    var c = JSON.parse(JSON.stringify(S));
-    c.phase = 'preroll';
-    lsSet(LS_NETSAVE, JSON.stringify({ v: 1, myIdx: NETLOCAL, state: c }));
+    if (NETLOCAL !== 0 && NETLOCAL !== 1) return;
+    lsSet(LS_NETSAVE, JSON.stringify({ v: 1, myIdx: NETLOCAL, state: S }));
   }
 
   function loadNetSave() {
     try {
       var d = JSON.parse(lsGet(LS_NETSAVE) || 'null');
-      if (d && d.v === 1 && (d.myIdx === 0 || d.myIdx === 1) &&
-          d.state && d.state.players && d.state.players.length === 2) return d;
+      if (!d || d.v !== 1 || (d.myIdx !== 0 && d.myIdx !== 1)) return null;
+      var state = readState(d.state, 'net');
+      if (state) return { v: 1, myIdx: d.myIdx, state: state };
     } catch (e) {}
     return null;
   }
@@ -140,10 +224,12 @@
   }
 
   /* ---------- pętla tury ---------- */
-  function beginTurn() {
+  function beginTurn(keepExchange) {
+    if (!S) return;
     var g = GEN;
     S.phase = 'preroll';
-    S.exchangeUsed = false;
+    delete S.resolvedRoll;
+    if (!keepExchange) S.exchangeUsed = false;
     dlog('beginTurn cur=', S.cur, 'turn=', S.turnCount);
     save();
     netSave();
@@ -161,27 +247,70 @@
     } else {
       if (isNet()) dice.setRemoteDriven(false);
       dice.setInteractive(true);
-      HUD.setDock('preroll-human', { exchangeUsed: false });
+      HUD.setDock('preroll-human', { exchangeUsed: S.exchangeUsed });
       if (!lsGet(LS_TUT)) HUD.swipeHint(true);
       flushNetQ();
     }
   }
 
+  function advanceTurn() {
+    S.cur = 1 - S.cur;
+    if (S.cur === 0) S.turnCount++;
+    beginTurn();
+  }
+
+  function restoreTurn() {
+    for (var i = 0; i < S.players.length; i++) {
+      if (RULES.checkWin(S.players[i].herd)) { finishGame(i); return; }
+    }
+    // Wynik został już zastosowany przed zapisaniem „resolving”. Nie rzucaj
+    // ponownie i nie stosuj go drugi raz; pozostała tylko prezentacja wyniku.
+    if (S.phase === 'resolving') advanceTurn();
+    else beginTurn(true);
+  }
+
   /* ---------- gra przez sieć: protokół ---------- */
+  function validFrame(d) {
+    return Array.isArray(d) && d.length === 2 && d.every(function (f) {
+      if (!Array.isArray(f) || f.length !== 7 || !f.every(function (n) { return typeof n === 'number' && Number.isFinite(n); })) return false;
+      if (Math.abs(f[0]) > 100 || Math.abs(f[1]) > 100 || Math.abs(f[2]) > 100) return false;
+      var q = f.slice(3), norm = q.reduce(function (sum, n) { return sum + n * n; }, 0);
+      return q.every(function (n) { return Math.abs(n) <= 1.001; }) && norm >= 0.5 && norm <= 1.5;
+    });
+  }
+
+  function validNetMessage(m) {
+    if (!m || typeof m !== 'object' || Array.isArray(m) || typeof m.t !== 'string') return false;
+    if (m.t === 'hi') return m.v === PROTOCOL_VERSION && validName(m.name);
+    if (m.t === 'go') {
+      if (m.v !== PROTOCOL_VERSION) return false;
+      if (m.resume !== undefined) {
+        return !!m.resume && (m.resume.hostIdx === 0 || m.resume.hostIdx === 1) && !!readState(m.resume.state, 'net');
+      }
+      return Array.isArray(m.names) && m.names.length === 2 && m.names.every(validName) && validTuning(m.bias);
+    }
+    if (m.t === 'again' || m.t === 'bye') return true;
+    if (['ex', 'roll', 'set', 'f', 'abort'].indexOf(m.t) < 0 ||
+        (m.player !== 0 && m.player !== 1) || !Number.isSafeInteger(m.turn) || m.turn < 1 || m.turn > 1000000) return false;
+    if (m.t === 'f') return validFrame(m.d);
+    if (m.t === 'set') return validFacePair(m.faces);
+    if (m.t === 'ex') return RULES.EXCHANGE_RATES.some(function (r) { return r.id === m.id; }) &&
+      (m.dir === 1 || m.dir === -1) && Number.isSafeInteger(m.times) && m.times >= 1 && m.times <= 60;
+    return true;
+  }
+
   function handleNetMsg(m) {
-    if (!isNet()) return;
+    if (!isNet() || !validNetMessage(m)) return;
+    if (['ex', 'roll', 'set', 'abort'].indexOf(m.t) >= 0 && !matchesTurn(m, S.cur, S.turnCount)) return;
     if (m.t === 'ex') {
       if (S.cur === NETLOCAL || S.phase !== 'preroll' || S.exchangeUsed) return;
-      var rate = null;
-      for (var i = 0; i < RULES.EXCHANGE_RATES.length; i++) {
-        if (RULES.EXCHANGE_RATES[i].id === m.id) rate = RULES.EXCHANGE_RATES[i];
-      }
-      if (!rate) return;
+      var rate = RULES.EXCHANGE_RATES.find(function (r) { return r.id === m.id; });
       var res = RULES.applyExchange(curP().herd, S.stock, rate, m.dir, m.times);
       if (!res) return;
       curP().herd = res.herd;
       S.stock = res.stock;
       S.exchangeUsed = true;
+      persist();
       AUDIO.coin();
       var gv = m.dir > 0 ? rate.give : rate.get;
       var gt = m.dir > 0 ? rate.get : rate.give;
@@ -194,9 +323,10 @@
       return;
     }
     if (m.t === 'roll') {
-      if (S.cur === NETLOCAL || (S.phase !== 'preroll' && S.phase !== 'rolling')) return;
+      if (S.cur === NETLOCAL || S.phase !== 'preroll') return;
       dice.setRemoteDriven(true);
       S.phase = 'rolling';
+      persist();
       HUD.setDock('rolling');
       HUD.dieLabels(null);
       AUDIO.whoosh();
@@ -209,24 +339,41 @@
       resolveRoll(m.faces);
       return;
     }
+    if (m.t === 'abort') {
+      if (S.cur !== NETLOCAL && S.phase === 'rolling') recoverRoll('Przeciwnik ponowi rzut — kostki nie ułożyły się płasko.', true);
+      return;
+    }
     if (m.t === 'again') {
       netStart(NETLOCAL === 0 ? 'host' : 'guest', S.players.map(function (p) { return p.name; }), S.bias);
       return;
     }
-    if (m.t === 'bye') { clearNetSave(); netEnd('Przeciwnik wyszedł z gry'); }
+    if (m.t === 'bye') { clearNetSave(); netEnd('Przeciwnik wyszedł z gry', true); }
   }
 
   function onNetMsg(m) {
-    if (!isNet()) return;
+    if (!isNet() || !validNetMessage(m)) return;
     if (m.t === 'f') {
-      if (S.cur !== NETLOCAL && (S.phase === 'preroll' || S.phase === 'rolling')) {
+      if (matchesTurn(m, S.cur, S.turnCount) && S.cur !== NETLOCAL && (S.phase === 'preroll' || S.phase === 'rolling')) {
         dice.setRemoteDriven(true);
         dice.applyNetFrame(m.d);
       }
       return;
     }
-    if (S.phase === 'resolving' && (m.t === 'ex' || m.t === 'roll' || m.t === 'set')) {
-      netQ.push(m);
+    if (S.phase === 'resolving' && (m.t === 'ex' || m.t === 'roll' || m.t === 'set' || m.t === 'abort')) {
+      var next = 1 - S.cur, nextRound = S.turnCount + (next === 0 ? 1 : 0);
+      // Tylko następna tura drugiego gracza może wyprzedzić nasze animacje.
+      if (next !== NETLOCAL && matchesTurn(m, next, nextRound) && netQ.length < MAX_NET_QUEUE) {
+        var phase = 'preroll', exchanged = false;
+        netQ.forEach(function (queued) {
+          if (queued.t === 'ex') exchanged = true;
+          else if (queued.t === 'roll') phase = 'rolling';
+          else if (queued.t === 'abort') phase = 'preroll';
+          else if (queued.t === 'set') phase = 'resolving';
+        });
+        if ((m.t === 'ex' && phase === 'preroll' && !exchanged) ||
+            (m.t === 'roll' && phase === 'preroll') ||
+            ((m.t === 'set' || m.t === 'abort') && phase === 'rolling')) netQ.push(m);
+      }
       return;
     }
     handleNetMsg(m);
@@ -235,13 +382,12 @@
   function netStart(role, names, bias, resume) {
     netQ = [];
     stopNetStream();
-    if (resume && resume.state) {
-      // wznowienie przerwanej gry: pełny stan przychodzi od zakładającego
+    if (resume) {
+      var restored = readState(resume.state, 'net');
+      if (!restored || (resume.hostIdx !== 0 && resume.hostIdx !== 1)) return false;
       NETLOCAL = role === 'host' ? resume.hostIdx : 1 - resume.hostIdx;
       GEN++;
-      S = resume.state;
-      S.mode = 'net';
-      S.phase = 'preroll';
+      S = restored;
       S.bias = normTuning(S.bias);
       dice.setTuning(S.bias);
       HUD.hideStart();
@@ -251,7 +397,7 @@
       HUD.refresh(S);
       HUD.feed({ who: 0, whoName: '', text: 'Wznowiono przerwaną grę (runda ' + S.turnCount + ')' });
       syncInsets();
-      beginTurn();
+      restoreTurn();
     } else {
       NETLOCAL = role === 'host' ? 0 : 1;
       startGame('net', names, bias);
@@ -259,8 +405,10 @@
     HUD.netDot('on');
   }
 
-  function netEnd(msg) {
+  function netEnd(msg, intentional) {
     var wasNet = isNet();
+    if (wasNet && !intentional) netSave();
+    NET_SESSION++;
     NET.close();
     NETLOCAL = -1;
     stopNetStream();
@@ -300,7 +448,9 @@
   }
 
   function netConnectFlow(role, name, bias, wantResume) {
-    netName = name || (role === 'host' ? 'Gracz 1' : 'Gracz 2');
+    var session = ++NET_SESSION;
+    var started = false;
+    netName = cleanName(name, role === 'host' ? 'Gracz 1' : 'Gracz 2');
     var netBias = normTuning(bias);
     $id('startov').classList.add('compact');
     $id('modeButtons').hidden = true;
@@ -315,23 +465,33 @@
     $id('pasteIn').value = '';
     var cbs = {
       onOpen: function () {
+        if (session !== NET_SESSION) return;
         $id('netStatus').textContent = 'Połączono!';
-        NET.send({ t: 'hi', name: netName });
+        NET.send({ t: 'hi', v: PROTOCOL_VERSION, name: netName });
       },
       onLink: function (ok) {
+        if (session !== NET_SESSION) return;
         if (isNet()) HUD.netDot(ok ? 'on' : 'off');
       },
       onMsg: function (m) {
+        if (session !== NET_SESSION) return;
+        if (!validNetMessage(m)) {
+          if (!started && m && (m.t === 'hi' || m.t === 'go') && m.v !== PROTOCOL_VERSION) {
+            $id('netStatus').textContent = 'Telefony mają różne wersje gry. Odśwież grę na obu urządzeniach i sparuj ponownie.';
+          }
+          return;
+        }
         if (m.t === 'hi') {
-          if (role === 'host') {
+          if (role === 'host' && !started) {
+            started = true;
             var rs = wantResume ? loadNetSave() : null;
             if (rs) {
-              NET.send({ t: 'go', resume: { state: rs.state, hostIdx: rs.myIdx } });
+              NET.send({ t: 'go', v: PROTOCOL_VERSION, resume: { state: rs.state, hostIdx: rs.myIdx } });
               netUiDone();
               netStart('host', null, null, { state: rs.state, hostIdx: rs.myIdx });
             } else {
               var names = [netName, m.name || 'Gracz 2'];
-              NET.send({ t: 'go', names: names, bias: netBias });
+              NET.send({ t: 'go', v: PROTOCOL_VERSION, names: names, bias: netBias });
               netUiDone();
               netStart('host', names, netBias);
             }
@@ -339,6 +499,8 @@
           return;
         }
         if (m.t === 'go') {
+          if (role !== 'guest' || started) return;
+          started = true;
           netUiDone();
           if (m.resume && m.resume.state) netStart('guest', null, null, m.resume);
           else netStart('guest', m.names, m.bias);
@@ -347,6 +509,7 @@
         onNetMsg(m);
       },
       onClose: function () {
+        if (session !== NET_SESSION) return;
         if (isNet()) {
           netEnd('Połączenie z drugim telefonem przerwane');
         } else {
@@ -368,6 +531,7 @@
   }
 
   function netCancel() {
+    NET_SESSION++;
     NET.close();
     $id('netconn').hidden = true;
     $id('netform').hidden = false;
@@ -375,8 +539,8 @@
 
   function botTurn(g) {
     sleep(1100).then(function () {
-      if (g !== GEN) return;
-      var ex = AI.chooseExchange(curP().herd, S.stock);
+      if (g !== GEN || !S || S.phase !== 'preroll' || !isBotTurn()) return;
+      var ex = S.exchangeUsed ? null : AI.chooseExchange(curP().herd, S.stock);
       var wait = 500;
       if (ex) {
         var res = RULES.applyExchange(curP().herd, S.stock, ex.rate, ex.dir, ex.times);
@@ -384,6 +548,7 @@
           curP().herd = res.herd;
           S.stock = res.stock;
           S.exchangeUsed = true;
+          persist();
           var gv = ex.dir > 0 ? ex.rate.give : ex.rate.get;
           var gt = ex.dir > 0 ? ex.rate.get : ex.rate.give;
           var gvN = (ex.dir > 0 ? ex.rate.giveN : ex.rate.getN) * ex.times;
@@ -396,7 +561,7 @@
         }
       }
       return sleep(wait).then(function () {
-        if (g !== GEN) return;
+        if (g !== GEN || !S || S.phase !== 'preroll') return;
         dlog('bot throwAuto, cur=', S.cur, 'phase=', S.phase);
         HUD.setDock('bot', { text: 'Zenek rzuca kośćmi…' });
         dice.throwAuto();
@@ -404,18 +569,46 @@
     }).catch(function () {});
   }
 
+  function recoverRoll(message, fromPeer) {
+    if (!S || S.phase !== 'rolling' || (isNet() && !isNetLocalTurn() && !fromPeer)) return;
+    stopNetStream();
+    if (isNetLocalTurn() && !fromPeer) sendTurnMessage({ t: 'abort' });
+    S.phase = 'preroll';
+    // Nie było wyniku: nie naliczaj rzutu, nie zwracaj zużytej wymiany.
+    persist();
+    beginTurn(true);
+    HUD.feed({ who: S.cur, whoName: whoName(), text: message || 'Kostki nie ułożyły się płasko. Ponów rzut.' });
+    if (!isBotTurn() && (!isNet() || isNetLocalTurn())) {
+      HUD.setDock('preroll-human', { exchangeUsed: S.exchangeUsed, hint: 'Kostki nie ułożyły się płasko — rzuć ponownie.' });
+    }
+  }
+
   /* ---------- rozstrzyganie rzutu ---------- */
   function resolveRoll(faces) {
+    if (!S || S.phase !== 'rolling' || !validFacePair(faces)) return;
     var g = GEN;
+    var player = S.cur;
     var p = curP();
+    var r = RULES.resolveRoll(p.herd, S.stock, faces[0], faces[1]);
+    if (!r) return;
     dlog('resolveRoll cur=', S.cur, 'faces=', faces.join('+'));
+    // Zatwierdź całą transakcję logiczną synchronicznie. Animacje poniżej są
+    // wyłącznie prezentacją i mogą zostać przerwane bez utraty wyniku.
+    p.herd = r.herd;
+    S.stock = r.stock;
+    S.stats.rolls[player]++;
+    r.events.forEach(function (ev) {
+      if ((ev.t === 'wolf' || ev.t === 'fox') && ev.saved) S.stats.dogSaves[player]++;
+      else if (ev.t === 'wolf') S.stats.wolfEaten[player] += ev.total;
+      else if (ev.t === 'fox') S.stats.foxStolen[player] += ev.lost;
+    });
     S.phase = 'resolving';
-    save();
-    S.stats.rolls[S.cur]++;
+    S.resolvedRoll = { player: player, turn: S.turnCount, faces: faces.slice() };
+    persist();
+    dice.setInteractive(false);
     HUD.setDock('resolving');
     HUD.dieLabels(faces, function (i) { return dice.getDieScreenPos(i); });
 
-    var r = RULES.resolveRoll(p.herd, S.stock, faces[0], faces[1]);
     var seq = Promise.resolve();
 
     r.events.forEach(function (ev) {
@@ -425,14 +618,12 @@
           if (ev.saved) {
             AUDIO.bark();
             HUD.flash('green');
-            S.stats.dogSaves[S.cur]++;
             HUD.feed({ who: S.cur, whoName: whoName(), icon: 'bigDog', text: 'Duży pies przegonił wilka!' });
             return HUD.eventBig({ icon: 'bigDog', t1: 'HAU! HAU!', t2: 'Duży pies przegonił wilka i wrócił do Stada Głównego', cls: 'good' }, 1900);
           }
           AUDIO.sting();
           HUD.flash('red');
           dice.shake(0.9);
-          S.stats.wolfEaten[S.cur] += ev.total;
           HUD.feed({ who: S.cur, whoName: whoName(), icon: 'wolf', text: ev.total ? 'Wilk pożarł ' + pluralZw(ev.total) + '!' : 'Wilk warował przy pustej zagrodzie' });
           var t2 = ev.total > 0
             ? 'Pożarł ' + pluralZw(ev.total) + '! Ocalały konie i mały pies'
@@ -443,12 +634,10 @@
           if (ev.saved) {
             AUDIO.bark();
             HUD.flash('green');
-            S.stats.dogSaves[S.cur]++;
             HUD.feed({ who: S.cur, whoName: whoName(), icon: 'smallDog', text: 'Mały pies przegonił lisa!' });
             return HUD.eventBig({ icon: 'smallDog', t1: 'HAU!', t2: 'Mały pies przegonił lisa i wrócił do Stada Głównego', cls: 'good' }, 1900);
           }
           AUDIO.sting();
-          S.stats.foxStolen[S.cur] += ev.lost;
           if (ev.lost > 0) {
             HUD.flash('red');
             dice.shake(0.6);
@@ -474,9 +663,7 @@
         if ((e.t === 'wolf' || e.t === 'fox') && e.saved) animMap[e.t === 'wolf' ? 'bigDog' : 'smallDog'] = -1;
       });
 
-      p.herd = r.herd;
-      S.stock = r.stock;
-      HUD.refresh(S, { player: S.cur, anim: animMap });
+      HUD.refresh(S, { player: player, anim: animMap });
 
       if (gainEvents.length) {
         AUDIO.gain();
@@ -492,19 +679,19 @@
       return sleep(350);
     }).then(function () {
       if (g !== GEN) return;
-      save();
-      if (RULES.checkWin(p.herd)) return finishGame(S.cur);
-      S.cur = 1 - S.cur;
-      if (S.cur === 0) S.turnCount++;
-      beginTurn();
+      if (RULES.checkWin(p.herd)) return finishGame(player);
+      advanceTurn();
     }).catch(function () {});
   }
 
   /* ---------- koniec gry ---------- */
   function finishGame(winner) {
+    if (!S || (winner !== 0 && winner !== 1)) return;
     S.phase = 'gameover';
-    lsDel(LS_SAVE);
-    if (isNet()) clearNetSave();
+    delete S.resolvedRoll;
+    if (isNet()) clearNetSave(); else lsDel(LS_SAVE);
+    stopNetStream();
+    netQ = [];
     dice.setInteractive(false);
     HUD.refresh(S);
     HUD.setDock('off');
@@ -530,6 +717,7 @@
 
   /* ---------- akcje HUD ---------- */
   function startGame(mode, names, bias) {
+    if (['solo', 'duo', 'net'].indexOf(mode) < 0) return;
     GEN++;
     S = newState(mode, names, bias);
     dice.setTuning(S.bias);
@@ -538,14 +726,16 @@
     HUD.closeSheets();
     HUD.buildCards(S);
     HUD.refresh(S);
-    HUD.feed({ who: 0, whoName: '', text: mode === 'solo' ? 'Nowa gra: Ty kontra Zenek. Powodzenia!' : 'Nowa gra na jednym telefonie. Powodzenia!' });
+    HUD.feed({ who: 0, whoName: '', text: mode === 'solo' ? 'Nowa gra: Ty kontra Zenek. Powodzenia!' : mode === 'net' ? 'Połączono dwie zagrody. Powodzenia!' : 'Nowa gra na jednym telefonie. Powodzenia!' });
     syncInsets();
     beginTurn();
   }
 
   function resumeGame(saved) {
+    var restored = readState(saved);
+    if (!restored || restored.mode === 'net') return;
     GEN++;
-    S = saved;
+    S = restored;
     S.bias = normTuning(S.bias);
     dice.setTuning(S.bias);
     HUD.hideStart();
@@ -555,30 +745,34 @@
     HUD.refresh(S);
     HUD.feed({ who: 0, whoName: '', text: 'Wznowiono zapisaną grę (runda ' + S.turnCount + ')' });
     syncInsets();
-    beginTurn();
+    restoreTurn();
   }
 
   function backToMenu() {
+    persist();
     GEN++;
+    S = null;
+    stopNetStream();
+    netQ = [];
     HUD.hideWin();
     HUD.closeSheets();
     dice.setInteractive(false);
-    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), netName: lsGet(LS_NETNAME) || '', bias: [0, 0], netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), netName: cleanName(lsGet(LS_NETNAME), ''), bias: [0, 0], netResume: netResumeLabel() });
   }
 
   function storedNames() {
-    try { return JSON.parse(lsGet(LS_NAMES) || 'null'); } catch (e) { return null; }
+    try {
+      var names = JSON.parse(lsGet(LS_NAMES) || 'null');
+      return Array.isArray(names) && names.length === 2 && names.every(validName) ? names : null;
+    } catch (e) { return null; }
   }
 
   // Strojenie kostek celowo NIE jest zapamiętywane między sesjami:
   // każdy nowy start zaczyna od kostek uczciwych (suwaki na środku).
   /** Normalizacja strojenia: {m:'w'|'s', v:[a,b]}; legacy tablica = ciężarek. */
   function normTuning(b) {
-    if (b && b.length === 2) return { m: 'w', v: [+b[0] || 0, +b[1] || 0] };
-    if (b && (b.m === 'w' || b.m === 's') && b.v && b.v.length === 2) {
-      return { m: b.m, v: [+b.v[0] || 0, +b.v[1] || 0] };
-    }
-    return { m: 'w', v: [0, 0] };
+    if (!validTuning(b)) return { m: 'w', v: [0, 0] };
+    return Array.isArray(b) ? { m: 'w', v: b.slice() } : { m: b.m, v: b.v.slice() };
   }
 
   /* ---------- insets / resize ---------- */
@@ -600,23 +794,25 @@
         symbolsA: RULES.DIE_A,
         symbolsB: RULES.DIE_B,
         onSettle: function (faces) {
-          dlog('onSettle faces=', faces.join('+'), 'phase=', S && S.phase, 'cur=', S && S.cur);
-          if (!S || S.phase !== 'rolling') return;
+          dlog('onSettle faces=', faces, 'phase=', S && S.phase, 'cur=', S && S.cur);
+          if (!S || S.phase !== 'rolling' || !validFacePair(faces) || (isNet() && !isNetLocalTurn())) return;
           if (isNetLocalTurn()) {
-            NET.send({ t: 'f', d: dice.getNetFrame() });
-            NET.send({ t: 'set', faces: faces });
+            sendTurnMessage({ t: 'f', d: dice.getNetFrame() });
+            sendTurnMessage({ t: 'set', faces: faces });
             stopNetStream();
           }
           resolveRoll(faces);
         },
+        onRollError: function (message) { recoverRoll(message, false); },
         onImpact: function (kind, strength) {
           AUDIO.knock(kind, strength);
           if (navigator.vibrate && strength > 0.35) { try { navigator.vibrate(strength > 0.7 ? 12 : 6); } catch (e) {} }
         },
         onThrow: function () {
           dlog('onThrow phase=', S && S.phase, 'cur=', S && S.cur);
-          if (!S || (S.phase !== 'preroll' && S.phase !== 'rolling')) return;
+          if (!S || (S.phase !== 'preroll' && S.phase !== 'rolling') || (isNet() && !isNetLocalTurn())) return;
           S.phase = 'rolling';
+          persist();
           HUD.swipeHint(false);
           lsSet(LS_TUT, '1');
           HUD.setDock('rolling');
@@ -624,7 +820,7 @@
           AUDIO.whoosh();
           HUD.closeSheets();
           if (isNetLocalTurn()) {
-            NET.send({ t: 'roll' });
+            sendTurnMessage({ t: 'roll' });
             startNetStream();
           }
         },
@@ -640,7 +836,7 @@
     } catch (err) {
       document.getElementById('hud').innerHTML =
         '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:30px;text-align:center;font-size:16px;color:#f3e8d2">' +
-        'Nie udało się uruchomić grafiki 3D (WebGL). Spróbuj w nowszej przeglądarce.' +
+        'Ta przeglądarka nie udostępnia grafiki potrzebnej do gry. Odśwież stronę lub otwórz ją w aktualnej przeglądarce.' +
         '</div>';
       return;
     }
@@ -658,13 +854,16 @@
         HUD.openSheet('sheetEx');
       },
       onExchangeApply: function (rate, dir, times, giveSym, getSym) {
-        if (!S || S.phase !== 'preroll' || S.exchangeUsed || (isNet() && S.cur !== NETLOCAL)) return;
+        if (!S || S.phase !== 'preroll' || isBotTurn() || S.exchangeUsed || (isNet() && S.cur !== NETLOCAL)) return;
         var res = RULES.applyExchange(curP().herd, S.stock, rate, dir, times);
         if (!res) return;
         curP().herd = res.herd;
         S.stock = res.stock;
         S.exchangeUsed = true;
-        if (isNetLocalTurn()) NET.send({ t: 'ex', id: rate.id, dir: dir, times: times });
+        persist();
+        if (isNetLocalTurn()) sendTurnMessage({ t: 'ex', id: rate.id, dir: dir, times: times });
+        giveSym = dir > 0 ? rate.give : rate.get;
+        getSym = dir > 0 ? rate.get : rate.give;
         AUDIO.coin();
         var gvN = (dir > 0 ? rate.giveN : rate.getN) * times;
         var gtN = (dir > 0 ? rate.getN : rate.giveN) * times;
@@ -715,7 +914,7 @@
       },
       onBackToMenu: function () {
         AUDIO.ui();
-        if (isNet()) { clearNetSave(); NET.send({ t: 'bye' }); netEnd(null); return; }
+        if (isNet()) { clearNetSave(); NET.send({ t: 'bye' }); netEnd(null, true); return; }
         backToMenu();
       },
       onBiasPreview: function (bias) {
@@ -737,6 +936,11 @@
       onNetCancel: function () { netCancel(); }
     });
 
+    if (dice.compatibilityMode) {
+      document.documentElement.dataset.renderer = '2d';
+      if (HUD.compatibilityMode) HUD.compatibilityMode(true);
+    }
+
     window.addEventListener('resize', function () {
       dice.resize();
       syncInsets();
@@ -750,7 +954,7 @@
     }, { passive: false });
 
     syncInsets();
-    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), netName: lsGet(LS_NETNAME) || '', bias: [0, 0], netResume: netResumeLabel() });
+    HUD.showStart({ canResume: !!loadSave(), resumeLabel: saveLabel(), names: storedNames(), netName: cleanName(lsGet(LS_NETNAME), ''), bias: [0, 0], netResume: netResumeLabel() });
     // uchwyt diagnostyczny (devtools)
     window.__SF = { dice: dice, get state() { return S; } };
   }

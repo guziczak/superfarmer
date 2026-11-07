@@ -39,11 +39,11 @@ for (const chunk of [three, cannon, qrgen, jsqr, srcs]) {
   if (chunk.includes('</scr' + 'ipt>')) throw new Error('kod zawiera </scr' + 'ipt> — złamałby inline');
 }
 
-const fonts = `<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Asap:wght@400;600;700;800&display=swap">`;
+// Systemowe kroje: szybki start i identyczna dostępność także offline.
+const fonts = '';
 
-const faviconSVG = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="80" font-size="80">🎲</text></svg>`)}`;
+const iconSVG = read('src/icon.svg');
+const faviconSVG = `data:image/svg+xml,${encodeURIComponent(iconSVG)}`;
 
 const scripts = `<script>${three}</script>
 <script>${cannon}</script>
@@ -56,18 +56,22 @@ const index = `<!doctype html>
 <html lang="pl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#241a10">
-<title>Superfarmer 3D</title>
+<meta name="theme-color" content="#183d32">
+<meta name="description" content="Przy jednym stole. Rzucaj prawdziwymi kostkami, rozwijaj stado i graj z Zenkiem albo we dwoje — również offline.">
+<meta name="color-scheme" content="light">
+<meta name="application-name" content="Superfarmer">
+<title>Superfarmer — przy jednym stole</title>
 <link rel="icon" href="${faviconSVG}">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 ${fonts}
 <style>${css}</style>
 </head>
 <body>
+<noscript><p style="padding:32px;font:18px system-ui;color:#183d32;background:#f7f3e8">Superfarmer potrzebuje JavaScript. Włącz go w przeglądarce i wróć do wspólnego stołu.</p></noscript>
 ${markup}
 ${scripts}
 <script>
@@ -83,51 +87,33 @@ writeFileSync(join(root, 'index.html'), index);
 
 /* ---------- PWA: service worker + manifest + ikona ---------- */
 const ver = createHash('md5').update(index).digest('hex').slice(0, 10);
-const sw = `// Superfarmer 3D — cache offline (network-first: online zawsze świeża wersja).
-const VER = 'sf3d-${ver}';
-self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VER).then((c) => c.addAll(['./'])).then(() => self.skipWaiting()));
-});
-self.addEventListener('activate', (e) => {
-  e.waitUntil(
-    caches.keys()
-      .then((ks) => Promise.all(ks.filter((k) => k !== VER).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
-  );
-});
-self.addEventListener('fetch', (e) => {
-  if (e.request.method !== 'GET') return;
-  e.respondWith(
-    fetch(e.request).then((resp) => {
-      if (resp && (resp.ok || resp.type === 'opaque')) {
-        const copy = resp.clone();
-        caches.open(VER).then((c) => c.put(e.request, copy)).catch(() => {});
-      }
-      return resp;
-    }).catch(() =>
-      caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match('./'))
-    )
-  );
-});
-`;
+const sw = read('src/sw.js').replace('__BUILD_ID__', ver);
 writeFileSync(join(root, 'sw.js'), sw);
 
 writeFileSync(join(root, 'manifest.webmanifest'), JSON.stringify({
-  name: 'Superfarmer 3D',
+  name: 'Superfarmer — przy jednym stole',
   short_name: 'Superfarmer',
   display: 'standalone',
-  background_color: '#241a10',
-  theme_color: '#241a10',
+  lang: 'pl',
+  description: 'Fizyczne kostki, wspólne stado i rozgrywka offline.',
+  background_color: '#f7f3e8',
+  theme_color: '#183d32',
+  scope: './',
+  id: './',
+  categories: ['games'],
   start_url: './',
-  icons: [{ src: './icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }]
+  icons: [
+    { src: './icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+    { src: './icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+    { src: './icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }
+  ]
 }, null, 1));
 
-writeFileSync(join(root, 'icon.svg'),
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#241a10"/><path d="M50 13 83 37 70 75 30 75 17 37Z" fill="#f4ecd9" stroke="#8a5716" stroke-width="3" stroke-linejoin="round"/><circle cx="50" cy="51" r="7" fill="#33261b"/><circle cx="38" cy="38" r="4.5" fill="#33261b"/><circle cx="62" cy="38" r="4.5" fill="#33261b"/><circle cx="41" cy="64" r="4.5" fill="#33261b"/><circle cx="59" cy="64" r="4.5" fill="#33261b"/></svg>`);
+writeFileSync(join(root, 'icon.svg'), iconSVG);
 
 /* ---------- wariant artefaktowy (bez szkieletu) ---------- */
-const artifact = `<title>Superfarmer 3D</title>
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+const artifact = `<title>Superfarmer — przy jednym stole</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 ${fonts}
 <style>${css}</style>
 ${markup}
